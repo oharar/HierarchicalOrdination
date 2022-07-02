@@ -15,20 +15,20 @@ varepsilon <- create_varepsilon(n_species, n_latent, varepsilon_sd)
 # B <- create_B(n_covs, n_latent, 10)
 
 omega <- t(create_betas(n_traits, n_latent, sd = 1, name = "omega"))
-B <- create_betas(n_covs, n_latent, sd = 1, name = "B")
+B <- create_betas(n_covs, n_latent, sd = 1, name = "B", Abs = TRUE)
 
 # Latent variable scales
-# LVpars <- exponential(1, dim = n_latent)
-# LVscales <- rev(cumsum(LVpars))
+ LVpars <- exponential(1, dim = n_latent)
+ LVscales <- rev(cumsum(LVpars))
 
-a1 <- gamma(2, 1, dim = 1)
-a2 <- gamma(2, 1, dim = 1)
-delta1 <- gamma(a1, 1, dim = 1)
-delta2 <- gamma(a2, 1, dim = n_latent - 1)
-delta <- c(delta1, delta2)
-phi <- gamma(1.5, 1.5, dim = n_latent)
-tau <- phi * cumprod(delta)
-LVscales <- 1 / tau
+# a1 <- gamma(2, 1, dim = 1)
+# a2 <- gamma(2, 1, dim = 1)
+# delta1 <- gamma(a1, 1, dim = 1)
+# delta2 <- gamma(a2, 1, dim = n_latent - 1)
+# delta <- c(delta1, delta2)
+# phi <- gamma(1.5, 1.5, dim = n_latent)
+# tau <- phi * cumprod(delta)
+# LVscales <- 1 / tau
 
 # row and column scores
 z <- X %*% B + epsilon # site

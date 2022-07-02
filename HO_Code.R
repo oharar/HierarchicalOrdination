@@ -16,7 +16,7 @@ TR1 <- antTraits$traits
 TR1 <- model.matrix(as.formula(paste("~",paste(colnames(antTraits$traits),collapse="+"))),TR1)[,-1]
 TR <- t(scale(TR1))
 
-n_latent <- 5 # Set 5 LVs
+n_latent <- 1 # Set 5 LVs
 n_traits <- nrow(TR)
 n_covs <- ncol(X1)
 
@@ -35,13 +35,17 @@ source("HO_model.R")
 m <- model(int, B, omega, epsilon_sd,varepsilon_sd, epsilon, varepsilon,
            LVscales, R2.gamma, R2.z)
 
-n_samples <- 500; n_warmup <- 500; n_thin <- 1; n_chains <- 10
-# n_samples <- 1e5;  n_warmup <- 1e4; n_thin <- 1e1; n_chains <- 3
+# n_samples <- 500; n_warmup <- 500; n_thin <- 1; n_chains <- 10
+n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
 
 # set initial values only for the delta part of the regularising prior on latent variables
 init <- initials(
   delta1 = 10,
   delta2 = rep(10, n_latent - 1)
+)
+
+init <- initials(
+  LVpars = 1
 )
 
 #and sample away
@@ -53,13 +57,14 @@ draws <- mcmc(m,
               thin = n_thin,
               sampler = hmc(Lmin = 20, Lmax = 25)
               )
-# save(draws,file="draws.RData")
-# draws2 <- extra_samples(draws, n_samples = 1e4, thin=10)
-# save(draws2,file="draws2.RData")
-
 pdf("Posts.pdf")
 plot(draws)
 dev.off()
-neff <- coda::effectiveSize(draws)
 
+# save(draws,file="draws.RData")
+draws2 <- extra_samples(draws, n_samples = 4.5e3, thin=10)
+# save(draws2,file="draws2.RData")
+
+
+neff <- coda::effectiveSize(draws)
 sort(neff)

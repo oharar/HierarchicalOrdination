@@ -1,6 +1,7 @@
-create_betas <- function(n_row,n_lat, sd, name="lat"){
+create_betas <- function(n_row,n_lat, sd, name="lat", Abs =FALSE){
   res_raw <- normal(0, 1, dim = c(n_row, n_lat))
   res <- res_raw * sd 
+  if(Abs) res[1] <- abs(res[1])
   return(res)
 }
 
