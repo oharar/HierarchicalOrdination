@@ -30,6 +30,8 @@ TR <- as_data(TR) # traits
 # log(lambda) = intB + z.scale%*%LVscales%*%gamma.scale
 # z <- X %*% B + epsilon
 # gamma <- omega %*% TR + varepsilon
+
+#The current model forces B[1]>0
 source("HO_model.R")
 
 m <- model(int, B, omega, epsilon_sd,varepsilon_sd, epsilon, varepsilon,
