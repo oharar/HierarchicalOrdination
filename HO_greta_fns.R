@@ -1,7 +1,11 @@
-create_betas <- function(n_row,n_lat, sd, name="lat", Abs =FALSE){
+create_betas <- function(n_row,n_lat, sd, name="lat", Abs = NULL){
+  if(!is.null(Abs)) {
+    if(!is.integer(Abs)) stop("Abs should be NULL or an integer")
+    if(Abs>n_row) stop("Abs cannot be larger than n_row")
+  }
   res_raw <- normal(0, 1, dim = c(n_row, n_lat))
   res <- res_raw * sd 
-  if(Abs) res[1] <- abs(res[1])
+  if(!is.null(Abs)) res[Abs,] <- abs(res[Abs,])
   return(res)
 }
 

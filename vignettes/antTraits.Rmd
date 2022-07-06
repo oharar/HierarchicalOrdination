@@ -1,0 +1,72 @@
+---
+title: "antTraits"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{antTraits}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(HeirarchicalOrdination)
+```
+
+First we need the data. It comes from the `mvabund`package.
+
+```{r GetData}
+library(mvabund)
+data(antTraits)
+
+```
+
+Next we use the `CreateModel()` function 
+
+```{r SetupModel}
+m <- CreateModel(abund = antTraits$abund, 
+                 env = antTraits$env, 
+                 traits = antTraits$traits, 
+                 n_latent = 1)
+
+
+```
+
+So we now have a model set up. Next we generate some initial values, and set the sampling parameters
+
+```{r Initsetc}
+n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
+
+init <- initials(
+  LVpars = 1
+)
+```
+
+and (finally) sample away
+
+```{r Sample}
+draws <- mcmc(m,
+              chains = n_chains,
+              n_samples = n_samples,
+              warmup = n_warmup,
+              initial_values = init,
+              thin = n_thin,
+              sampler = hmc(Lmin = 20, Lmax = 25)
+              )
+```
+
+We can plot some of the densities. Starting with an intercept
+
+```{r PlotInt}
+plot(draws[,"int[1,1]"])
+```
+
+
+```{r PlotB, fig.height=6}
+plot(draws[,c(paste0("B[", 1:4, ",1]"))])
+```

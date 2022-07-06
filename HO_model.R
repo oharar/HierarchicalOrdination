@@ -8,7 +8,8 @@ epsilon <- create_epsilon(n_sites, n_latent, epsilon_sd)
 # Species residuals
 # varepsilon_sd <- cauchy(0, 3, truncation = c(0, Inf),dim=n_latent)
 varepsilon_sd <- exponential(1, dim = n_latent)
-varepsilon <- create_varepsilon(n_species, n_latent, varepsilon_sd)
+# varepsilon <- create_varepsilon(n_species, n_latent, varepsilon_sd)
+varepsilon <- t(create_epsilon(n_species, n_latent, varepsilon_sd))
 
 # Species and site predictor coefficients
 # omega <- create_omega(n_traits,n_latent,10)
@@ -17,7 +18,8 @@ varepsilon <- create_varepsilon(n_species, n_latent, varepsilon_sd)
 omega <- t(create_betas(n_traits, n_latent, sd = 1, name = "omega"))
 # Abs=TRUE tells the function to fix the first value to be positive 
 #   (by taking the absolute value)
-B <- create_betas(n_covs, n_latent, sd = 1, name = "B", Abs = TRUE)
+B <- create_betas(n_covs, n_latent, sd = 1, name = "B", 
+                  Abs = as.integer(2))
 
 # Latent variable scales
  LVpars <- exponential(1, dim = n_latent)

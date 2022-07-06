@@ -1,0 +1,19 @@
+Package: HeirarchicalOrdination
+Title: Package To Develop Hierarchical Ordination
+Version: 0.0.1
+Authors@R: 
+    person("Bob", "O'Hara", , "bob.ohara@ntnu.no", role = c("aut", "cre"),
+           comment = c(ORCID = "0000-0001-9737-3724"))
+Description: The package is for initial development of hierarchical ordination, using greta to fit the models. It is intended to be a simple example.
+License: `use_gpl3_license()`
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.2.0
+Suggests: 
+    knitr,
+    rmarkdown,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+Depends: 
+    greta
