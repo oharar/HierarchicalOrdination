@@ -23,24 +23,25 @@ First we need the data. It comes from the `mvabund`package.
 ```{r GetData}
 library(mvabund)
 data(antTraits)
-
 ```
 
 Next we use the `CreateModel()` function 
 
+Vignette stops working here
 ```{r SetupModel}
 m <- CreateModel(abund = antTraits$abund, 
                  env = antTraits$env, 
                  traits = antTraits$traits, 
                  n_latent = 1)
-
-
 ```
 
 So we now have a model set up. Next we generate some initial values, and set the sampling parameters
 
+
 ```{r Initsetc}
-n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
+n_samples <- 500; n_warmup <- 500; n_thin <- 1; n_chains <- 10
+
+#n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
 
 init <- initials(
   LVpars = 1

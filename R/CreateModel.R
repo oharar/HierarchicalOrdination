@@ -62,8 +62,8 @@ CreateModel <- function(abund, traits, env, n_latent=1,
   LVscales <- rev(cumsum(LVpars))
   
   # row and column scores
-  z <- X %*% B + epsilon # site
-  gamma <- omega %*% TR + varepsilon # species
+  z <- Env %*% B + epsilon # site
+  gamma <- omega %*% Traits + varepsilon # species
   R2.z <- CalcR2(tot = z, eps = epsilon, MARGIN = 2)
   R2.gamma <- CalcR2(tot = gamma, eps = varepsilon, MARGIN = 1)
   
