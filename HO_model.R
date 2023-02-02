@@ -15,11 +15,10 @@ varepsilon <- t(create_epsilon(n_species, n_latent, varepsilon_sd))
 # omega <- create_omega(n_traits,n_latent,10)
 # B <- create_B(n_covs, n_latent, 10)
 
-omega <- t(create_betas(n_traits, n_latent, sd = 1, name = "omega"))
+omega <- t(create_betas(n_traits, n_latent, sd = 1))
 # Abs=TRUE tells the function to fix the first value to be positive 
 #   (by taking the absolute value)
-B <- create_betas(n_covs, n_latent, sd = 1, name = "B", 
-                  Abs = as.integer(2))
+B <- create_betas(n_covs, n_latent, sd = 1,  sign = TRUE)
 
 # Latent variable scales
  LVpars <- exponential(1, dim = n_latent)
