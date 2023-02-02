@@ -16,7 +16,7 @@ TR1 <- antTraits$traits
 TR1 <- model.matrix(as.formula(paste("~",paste(colnames(antTraits$traits),collapse="+"))),TR1)[,-1]
 TR <- t(scale(TR1))
 
-n_latent <- 1 # Set 5 LVs
+n_latent <- 2# Set 5 LVs
 n_traits <- nrow(TR)
 n_covs <- ncol(X1)
 
@@ -38,7 +38,7 @@ m <- model(int, B, omega, epsilon_sd,varepsilon_sd, epsilon, varepsilon,
            LVscales, R2.gamma, R2.z)
 
 # n_samples <- 500; n_warmup <- 500; n_thin <- 1; n_chains <- 10
-n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
+n_samples <- 1e4;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
 
 # set initial values only for the delta part of the regularising prior on latent variables
 init <- initials(
@@ -47,7 +47,7 @@ init <- initials(
 )
 
 init <- initials(
-  LVpars = 1
+  LVpars = rep(1,n_latent)
 )
 
 #and sample away
