@@ -995,31 +995,34 @@ block of the covariance matrix where <span class="math inline">\(i =
 i2\)</span>, or for the site-to-site matrix where we consider the block
 <span class="math inline">\(j = j2\)</span>, we have:</p>
 <span class="math display">\[\begin{split}
-\Sigma_{j,j2}\bigg\rvert_{i = i2} &amp;=
+\Sigma_{j,j2} &amp;=
 \boldsymbol{x}_i^\top\boldsymbol{B}\boldsymbol{\Sigma}\text{cov}(\boldsymbol{\varepsilon}_j,\boldsymbol{\varepsilon}_{j2})
-\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{x}_{i2} +
+\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{x}_{i} +
 \text{cov}(\boldsymbol{\epsilon}_i^\top
 \boldsymbol{\Sigma}\boldsymbol{\varepsilon}_j,\boldsymbol{\epsilon}_{i}^\top
 \boldsymbol{\Sigma} \boldsymbol{\varepsilon}_{j2}) +
-\boldsymbol{tr}_{j}^\top\boldsymbol{\omega}\boldsymbol{\Sigma}\text{var}(\boldsymbol{\epsilon}_{i},\boldsymbol{\epsilon}_{i2})\boldsymbol{\Sigma}\boldsymbol{\omega}^\top\boldsymbol{tr}_{j2}
+\boldsymbol{tr}_{j}^\top\boldsymbol{\omega}\boldsymbol{\Sigma}\text{var}(\boldsymbol{\epsilon}_{i},\boldsymbol{\epsilon}_{i})\boldsymbol{\Sigma}\boldsymbol{\omega}^\top\boldsymbol{tr}_{j2}
 \\
 &amp;=
 \boldsymbol{x}_i^\top\boldsymbol{B}\boldsymbol{\Sigma}\text{cov}(\boldsymbol{\varepsilon}_j,\boldsymbol{\varepsilon}_{j2})
-\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{x}_{i2} +
+\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{x}_{i} +
 \boldsymbol{tr}_{j}^\top\boldsymbol{\omega}\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\sigma}^2)\boldsymbol{\Sigma}\boldsymbol{\omega}^\top\boldsymbol{tr}_{j2}+
 2\text{tr}\{\text{diag}(\boldsymbol{\delta}^2)\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\sigma}^2)\boldsymbol{\Sigma}\},
 \end{split}\]</span>
 <p>and</p>
 <p><span class="math display">\[\begin{equation}
-\Sigma_{i,i2}\bigg\rvert_{j=j2} =
-\boldsymbol{tr}_{j}^\top\boldsymbol{\omega}\boldsymbol{\Sigma}\text{cov}(\boldsymbol{\epsilon}_{i},\boldsymbol{\epsilon}_{i2})\boldsymbol{\Sigma}\boldsymbol{\omega}^\top\boldsymbol{tr}_{j2}
+\Sigma_{i,i2} =
+\boldsymbol{tr}_{j}^\top\boldsymbol{\omega}\boldsymbol{\Sigma}\text{cov}(\boldsymbol{\epsilon}_{i},\boldsymbol{\epsilon}_{i2})\boldsymbol{\Sigma}\boldsymbol{\omega}^\top\boldsymbol{tr}_{j}
 +
 \boldsymbol{x}_i^\top\boldsymbol{B}\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\delta}^2)\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{x}_{i2}
 +
 2\text{tr}\{\text{diag}(\boldsymbol{\delta}^2)\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\sigma}^2)\boldsymbol{\Sigma}\}.
 \end{equation}\]</span></p>
-<p>So, we will visualize those matrices here for the first site and
-first species, respectively.</p>
+<p>This shows that the covariance of species is determined by traits,
+LV-specific variation and sites’ residual variation, and the covariance
+between sites is determined by the environment, LV-specific variation
+and species’ residual variation. We can visualize those matrices here
+for (e.g.,) the first site and first species, respectively.</p>
 <pre class="r"><code>#species
 spec.mat &lt;- matrix(0,nrow=m,ncol=m)
 Sigma &lt;- diag(LVsd^2)
