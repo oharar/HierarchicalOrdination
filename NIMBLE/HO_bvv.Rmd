@@ -308,7 +308,7 @@ B <- matrix(B$Mean,ncol=consts$d)
 
 LVs <- X%*%B+epsilon
 #LVs
-plot(LVs,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Sites")
+plot(LVs,type="n", xlab="Sites", ylab="Latent variable 1", main = "Sites")
 text(LVs,labels=1:consts$n)
 
 # Now the species loadings
@@ -320,7 +320,7 @@ O <- matrix(O$Mean,ncol=consts$d)
 
 gamma <- TR%*%O+varepsilon
 #LVs
-plot(gamma,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Species")
+plot(gamma,type="n", xlab="Species", ylab="Latent variable 1", main = "Species")
 text(gamma,labels=vegan::make.cepnames(colnames(Y)))
 ```
 
@@ -382,7 +382,7 @@ HO <- nimbleCode({
     # priors for scales
     Sitesd[i] ~ dexp(1)
     Speciesd[i] ~ dexp(1)
-    LVsd[i] ~ dexp(1)
+    LVsd[i] ~ dexp(.1)
     } 
   
   ## Free lower diagonals
@@ -439,7 +439,7 @@ conf$addSampler(target = 'varepsilon',
 mcmc <- buildMCMC(conf)
 cmcmc <- compileNimble(mcmc, project = model)
   
- return(runMCMC(cmcmc,  niter=55000, nburnin = 5000, thin=10,nchains = 1, samplesAsCodaMCMC = T))
+ return(runMCMC(cmcmc,  niter=1000000, nburnin = 50000, thin=100,nchains = 1, samplesAsCodaMCMC = T))
 }
 
 samples <- parLapply(cl = nimble_cluster, fun = modit,
@@ -449,6 +449,7 @@ samples <- parLapply(cl = nimble_cluster, fun = modit,
                               consts = consts, X = 1:20)
 stopCluster(nimble_cluster)
 save(samples,file="samples2.RData")
+#new run changes niter to 1mil, nburn 50k, thin 100
 ```
 
 ## Results
