@@ -1,30 +1,12 @@
-create_betas <- function(n_row,n_lat, sd, name="lat", Abs = NULL){
-  if(!is.null(Abs)) {
-    if(!is.integer(Abs)) stop("Abs should be NULL or an integer")
-    if(Abs>n_row) stop("Abs cannot be larger than n_row")
-  }
-  res_raw <- normal(0, 1, dim = c(n_row, n_lat))
+create_betas <- function(n_row,n_lat, sd, sign = FALSE){
+  res_raw <- greta_array(0,dim = c(n_row,n_lat))
+  if(n_lat>1)res_raw[lower.tri(res_raw,diag=T)]<- normal(0, 1, dim = sum(lower.tri(res_raw,diag=T)))
+  if(n_lat==1)res_raw <- normal(0, 1, dim =n_row )
   res <- res_raw * sd 
-  if(!is.null(Abs)) res[Abs,] <- abs(res[Abs,])
+  if(sign) base::diag(res) <- base::diag(res)
   return(res)
 }
 
-
-#function that creates slopes for traits
-create_omega <- function(n_traits,n_latent, sd){
-  omega_raw <- normal(0, 1, dim = c(n_latent, n_traits))
-  omega <- sweep(omega_raw, 1, sd, FUN = "*") 
-  
-  return(omega)
-}
-
-#function that creates traits for predictors
-create_B <- function(n_covs,n_latent, sd){
-  B_raw <- normal(0, 1, dim = c(n_covs, n_latent))
-  B <- sweep(B_raw, 2, sd, FUN = "*") 
-  
-  return(B)
-}
 #function that creates residual for LVs
 create_epsilon <- function(n_sites, n_latent, sd){
   if(length(sd)!=n_latent){
