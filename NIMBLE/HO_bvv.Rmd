@@ -103,7 +103,6 @@ HO <- nimbleCode({
     Speciesd ~ dexp(1)
     LVsd ~ dexp(1)
 
-    # Sign constraint
     for(k in 1:p){
       B[k] ~ dnorm(0, sd = 1)  
     }
