@@ -2,6 +2,8 @@
 title: "Hierarchical ordination"
 output: html_document
 date: "2023-02-08"
+editor_options: 
+  chunk_output_type: console
 ---
 ## Introduction
 
@@ -366,14 +368,14 @@ HO <- nimbleCode({
   for(i in 1:(d-1)) { 
     for(j in (i+1):(d)) {
       B[i,j] <- 0 
-      O[i,j] <- 0
+      #O[i,j] <- 0
     } 
   }
   
   for(i in 1:d) { 
     # diagonal elements
     B[i,i] ~ dnorm(0,1)
-    O[i,i] ~ dnorm(0,1)#T(dnorm(0,1),0,Inf)
+    #O[i,i] ~ dnorm(0,1)#T(dnorm(0,1),0,Inf)
     ## standardizing z and gamma
     zmu[i] <- mean(z[1:n,i])
     zs[1:n,i] <- (z[1:n,i]-zmu[i])/sqrt(mean((z[1:n,i] - zmu[i])^2)) #scale z to unit sd and center
@@ -382,19 +384,24 @@ HO <- nimbleCode({
     # priors for scales
     Sitesd[i] ~ dexp(1)
     Speciesd[i] ~ dexp(1)
-    LVsd[i] ~ dexp(.1)
+    LVsd[i] ~ dexp(1)
     } 
   
   ## Free lower diagonals
   for(i in 2:d) { 
     for(j in 1:(i-1)) { 
       B[i,j] ~ dnorm(0,1)
-      O[i,j] ~ dnorm(0,1)
+      #O[i,j] ~ dnorm(0,1)
       } 
     }
   for(i in (d+1):p) { for(j in 1:(d)) { B[i,j] ~dnorm(0,1) } } ## All other elements
-  for(i in (d+1):t) { for(j in 1:(d)) { O[i,j] ~dnorm(0,1) } } ## All other elements
+  #for(i in (d+1):t) { for(j in 1:(d)) { O[i,j] ~dnorm(0,1) } } ## All other elements
 
+  for(tr in 1:t){
+    for(q in 1:d){
+      O[tr,q] ~dnorm(0,1)
+    }
+  }
 })
 ```
 
@@ -404,7 +411,6 @@ inits<-function(consts){
   B = matrix(rnorm(consts$d*consts$p),ncol=consts$d)
   B[upper.tri(B)] = 0
   O = matrix(rnorm(consts$d*consts$t),nrow=consts$t)
-  O[upper.tri(O)] = 0
   varepsilon = mvtnorm::rmvnorm(consts$m,rep(0,consts$d),diag(consts$d))
   epsilon = mvtnorm::rmvnorm(consts$n,rep(0,consts$d),diag(consts$d))
   list(
@@ -420,10 +426,10 @@ inits<-function(consts){
 }
 ```
 
-put it all together, and run it:
+put it all together, and run it for a bit longer time than before:
 ```{r mcmc2_run, eval = F}
 library(parallel)
-nimble_cluster <- makeCluster(20)
+nimble_cluster <- makeCluster(40)
 
 modit <- function(seed,dat,code,inits,consts){
   library(nimble)
@@ -462,7 +468,7 @@ par(mfrow=c(1,1))
 # chains <- setNames(samples,paste0("chain", 1:length(samples)))
 
 # post-process chains for sign-swapping
-#chains <- postProcess(chains, consts = consts)
+# chains <- postProcess(chains, consts = consts)
 # I have already done that so loading it here
 # save(chains,file="chains_post2.RData")
 load("chains_post2.RData")
@@ -489,7 +495,7 @@ The traceplots look quite OK. Now, we can make two-dimensional ordination plots 
 ```{r results2_site, warning=F,message=F}
 par(mfrow=c(1,2))
 
-# First a plot of the site scores
+# create the site scores
 epsilon <- data.frame(out$summary[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),][grep("epsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),]))),])
 epsilon <- matrix(epsilon$Mean,ncol=consts$d)
 
@@ -497,7 +503,18 @@ B <- data.frame(out$summary[grep("B",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", ro
 B <- matrix(B$Mean,ncol=consts$d)
 
 LVs <- X%*%B+epsilon
-#LVs
+
+# Now the species loadings
+varepsilon <- data.frame(out$summary[grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
+varepsilon <- matrix(varepsilon$Mean,ncol=consts$d)
+
+O <- data.frame(out$summary[grep("O",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
+O <- matrix(O$Mean,ncol=consts$d)
+
+gamma <- TR%*%O+varepsilon
+
+
+#plot LVs
 plot(LVs,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Sites")
 text(LVs,labels=1:consts$n)
 
@@ -514,25 +531,12 @@ arrows(
             1] + origin[1],
   y1 = ends[, 2] + origin[2],
   col = "red",
-  length = 0.1)
+  length = 0.05)
 text(
   x = origin[1] + ends[, 1] * 1.1,
   y = origin[2] + ends[, 2] * 1.1,
   labels = colnames(X),
   col = "red")
-
-# Now the species loadings
-varepsilon <- data.frame(out$summary[grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-varepsilon <- matrix(varepsilon$Mean,ncol=consts$d)
-
-O <- data.frame(out$summary[grep("O",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-O <- matrix(O$Mean,ncol=consts$d)
-
-gamma <- TR%*%O+varepsilon
-
-#gammas
-plot(gamma,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Species")
-text(gamma,labels=vegan::make.cepnames(colnames(Y)))
 
 # plot arrows
 marg <- par("usr")
@@ -547,12 +551,58 @@ arrows(
             1] + origin[1],
   y1 = ends[, 2] + origin[2],
   col = "blue",
-  length = 0.1)
+  length = 0.05)
 text(
   x = origin[1] + ends[, 1] * 1.1,
   y = origin[2] + ends[, 2] * 1.1,
   labels = colnames(TR),
   col = "blue")
+
+#plot gammas
+plot(gamma,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Species")
+points(gamma, pch=19)#,labels=vegan::make.cepnames(colnames(Y)))
+
+# plot arrows
+marg <- par("usr")
+origin <- c(mean(marg[1:2]), mean(marg[3:4]))
+Xlength <- sum(abs(marg[1:2]))/2
+Ylength <- sum(abs(marg[3:4]))/2
+ends <- O / max(abs(O)) * min(Xlength, Ylength) * .8
+arrows(
+  x0 = origin[1],
+  y0 = origin[2],
+  x1 = ends[,
+            1] + origin[1],
+  y1 = ends[, 2] + origin[2],
+  col = "blue",
+  length = 0.05)
+text(
+  x = origin[1] + ends[, 1] * 1.1,
+  y = origin[2] + ends[, 2] * 1.1,
+  labels = colnames(TR),
+  col = "blue")
+
+# plot arrows
+marg <- par("usr")
+origin <- c(mean(marg[1:2]), mean(marg[3:4]))
+Xlength <- sum(abs(marg[1:2]))/2
+Ylength <- sum(abs(marg[3:4]))/2
+ends <- B / max(abs(B)) * min(Xlength, Ylength) * .8
+arrows(
+  x0 = origin[1],
+  y0 = origin[2],
+  x1 = ends[,
+            1] + origin[1],
+  y1 = ends[, 2] + origin[2],
+  col = "red",
+  length = 0.05)
+text(
+  x = origin[1] + ends[, 1] * 1.1,
+  y = origin[2] + ends[, 2] * 1.1,
+  labels = colnames(X),
+  col = "red")
+
+
 ```
 
 We can also look at some summary statistics for the scale parameters of the latent variables, species-specific residuals and site-specific residuals, respectively:
