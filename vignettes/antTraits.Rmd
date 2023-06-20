@@ -27,7 +27,6 @@ data(antTraits)
 
 Next we use the `CreateModel()` function 
 
-Vignette stops working here
 ```{r SetupModel}
 m <- CreateModel(abund = antTraits$abund, 
                  env = antTraits$env, 
@@ -39,9 +38,8 @@ So we now have a model set up. Next we generate some initial values, and set the
 
 
 ```{r Initsetc}
-n_samples <- 500; n_warmup <- 500; n_thin <- 1; n_chains <- 10
-
-#n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
+#n_samples <- 500; n_warmup <- 500; n_thin <- 1; n_chains <- 10
+n_samples <- 1e3;  n_warmup <- 1e3; n_thin <- 1e1; n_chains <- 10
 
 init <- initials(
   LVpars = 1
@@ -55,7 +53,7 @@ draws <- mcmc(m,
               chains = n_chains,
               n_samples = n_samples,
               warmup = n_warmup,
-              initial_values = init,
+#              initial_values = init,
               thin = n_thin,
               sampler = hmc(Lmin = 20, Lmax = 25)
               )

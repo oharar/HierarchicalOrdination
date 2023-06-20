@@ -3,27 +3,53 @@ title: "Hierarchical ordination"
 output: html_document
 date: "2023-02-08"
 ---
-## Introduction
 
-The data is included in the \texttt{mvabund} \texttt{R}-package, but was originally collected by [Gibb *et al*](https://link.springer.com/article/10.1007/s00442-014-3101-9). It includes abundances of 41 ant species at 30 sites in Australia. It is a list of three objects, a matrix of abundances, but also one with 7 environmental variables, and another with 5 traits.
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
+```
 
-First we load the data and set some constants:
-```{r data}
+# An Example of Hirearchical Ordination
+
+This document describes fitting a hierarchical ordination to data, including code and the nasty details that are needed.
+
+The data is included in the 'mvabund' 'R'-package, but was originally collected by [Gibb *et al*](https://link.springer.com/article/10.1007/s00442-014-3101-9). It is the observed abundances of 41 ant species at 30 sites in Australia, along with 7 environmental variables, and 5 traits. Our question is how do the environmental variables and traits affect the community composition, including whether they interact.
+
+The abundances, traits and envirinment are each stored in a different matrix. First we load the data and set some constants:
+
+```{r data, cache=FALSE, message=FALSE}
+library(nimble)
+library(nimbleHMC)
 library(mvabund)
 data("antTraits")
 Y <- antTraits$abund # abundance data of sites by species
 X <- scale(antTraits$env) # environmental variables of sites by predictors
 TR <- scale(model.matrix(~0+.,antTraits$traits)) # species traits
 
-n <- nrow(Y) # number of sites
-m <- ncol(Y) # number of species
-t <- ncol(TR) # number of traits
-p <- ncol(X) # number of predictors
+NSites <- nrow(Y) # number of sites
+NSpecies <- ncol(Y) # number of species
+NTraits <- ncol(TR) # number of traits
+NEnv <- ncol(X) # number of environmental predictors
+
+# Create data lists for Nimble
+dat <- list(Y = Y, X = X, TR = TR)
+consts <- list(NSites = NSites, NEnv = NEnv, NTraits = NTraits, NSpecies = NSpecies)
+
 ```
 
 
-## The model
-We denote the matrix of abundances as $\boldsymbol{Y}$ at site $i = 1 \dots n$ for species $j = 1 \dots p$, the $k = 1 \ldots p$ predictors as $\boldsymbol{X}$, and $t = 1\ldots T$ traits as $\boldsymbol{TR}$. We then assume
+## The Model
+
+We assume that the counts follow a Poisson distribution with a log link function (as we would do in a standard GLM). We assume a species effect ($\beta_{0j}$ for species $j$), and the rest is the hierarchical ordination, so the model for the log of the mean abundance ($\eta_{ij}$) is 
+
+$$
+\eta_{ij} = \beta_{0j} + \boldsymbol{z}_i^\top \boldsymbol{\Sigma} \boldsymbol{\gamma}_j.
+$$
+The idea here is that $\boldsymbol{z}$ and $\boldsymbol{\gamma}_j$ are the site scores and species loading, equivalent to a typical ordination. But here we assume that they each have a variance of 1, so that $\boldsymbol{\Sigma}$ is the variance of the latent variables: it will typically be a diagonal matrix, and if any of the terms on the diagonal are close to 0, this suggests that latent variable has (almost) no effect.
+
+This is the same as a classical GLLVM, but here we go further by modelling both $\boldsymbol{z}$ and $\boldsymbol{\gamma}_j$. As a simplification, we can think about this as simply a regression of $\boldsymbol{z}$ (the site effects) against the environmental variables and $\boldsymbol{\gamma}_j$ against the traits. In reality, it is more complicated, because $\boldsymbol{z}$ and $\boldsymbol{\gamma}_j$ are estiamted in the model, so their uncertainty needs to be included.
+
+<details><summary>The mathematical details are hidden away here, for those who want them.</summary>
+We denote the abundance at site $i = 1 \dots n$ for species $j = 1 \dots p$ as $Y_{ij}$, or as a matrix as $\boldsymbol{Y}$. The environmental predictors are $X_{ik}$ for the $k = 1 \ldots K$ predictors (or $\boldsymbol{X}$ as a matrix), and $t = 1\ldots T$ traits as $\boldsymbol{R}$. We then assume
 
 $$Y_{ij} \sim Pois(\lambda_{ij})$$, 
 
@@ -31,12 +57,11 @@ with
 
 $$log(\lambda_{ij}) = \eta_{ij}$$. 
 
-So that $\eta_{ij}$ is the linear predictor, which we will model with the hierarchical ordination.
+So that $\eta_{ij}$ is the linear predictor, which we will model with the hierarchical ordination:
 
 $$
 \eta_{ij} = \beta_{0j} + \boldsymbol{z}_i^\top \boldsymbol{\Sigma} \boldsymbol{\gamma}_j
 $$
-where $\boldsymbol{z}_i$  are the site scores (or latent variable) for site $i$, and $\boldsymbol{\gamma}_j$ is are the loadings for species $j$. We have additionally have species intercepts $\beta_{0j} \sim \mathcal{N}(0, 1)$.
 
 We then model $\boldsymbol{z}_i$ (as in [van der Veen *et al* (2023)](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14035)) and $\boldsymbol{\gamma}_j$ hierarchically:
 
@@ -46,7 +71,7 @@ $$
 and 
 
 $$
-\boldsymbol{\gamma}_j = \boldsymbol{\omega}^\top\boldsymbol{tr}_{j} + \boldsymbol{\varepsilon}_j
+\boldsymbol{\gamma}_j = \boldsymbol{\omega}^\top\boldsymbol{R}_{j} + \boldsymbol{\varepsilon}_j
 $$
 where
 
@@ -58,81 +83,77 @@ where
 - $\boldsymbol{\varepsilon}_j$ with entry $\varepsilon_{jq}  \sim \mathcal{N}(0, \delta^2_q)$ is a vector of residuals for the unexplained part of the species loading
 
 Note that the predictors are all standardized to zero mean, variance one. We additionally place exponential priors on the scale parameters $\boldsymbol{\sigma}$ and $\boldsymbol{\delta}$ with rate parameter one.
+</details>
+
 
 # Implementation 
-We fit the model with the $\texttt{Nimble}$ \texttt{R}-package. 
 
-First we fit the model with a single dimension, because for more dimensions extra constraints are needed. As formulated above, the model is unidentifiable (as latent variable models usually are). First, we standardise $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ to unit variance per latent variable to prevent scale invariance. Note that at this point the model is still invariance to sign switching. Dealing with sign switching is a bit messy. We could solve it by placing a truncated normal prior on the main diagonal entries of $\boldsymbol{B}$ or $\boldsymbol{\omega}$, but that still results in a bimodal posterior distribution for other coefficients. Hence, it is easier to leave this as it is and post-process the MCMC chains so that the diagonal entries of $\boldsymbol{B}$ are always positive.
-Note however, that for $d \gt p$ the model is still invariant to sign switches, so if the number of latent variables is greater than the number of predictors, additional constraints need to be imposed on the diagonal of $\boldsymbol{\omega}$ or on the $\boldsymbol{\epsilon}_i$'s or $\boldsymbol{\epsilon}_j$'s instead. 
+We fit the model with the $\texttt{Nimble}$ \texttt{R} package. We start with a single dimension for simplicity, so that we can show the steps needed.
 
 ### One dimensional ordination
 
 This is the code for the model with one dimension:
-```{r model_code, message=F, warning=F}
-library(nimble)
-HO <- nimbleCode({
-  for (i in 1:n) {
-    for (j in 1:m) {
-      eta[i,j] <- beta0[j] + gammas[j]*LVsd*zs[i]
-      log(lambda[i, j]) <- eta[i, j]
-      Y[i, j] ~ dpois(lambda[i, j])
-      # deviance[i, j] <- dpois(Y[i, j], lambda[i, j], log=TRUE)
-    }      
-      epsilon[i] ~ dnorm(0, sd = Sitesd)#Residual
-      XB[i] <- inprod(X[i, 1:p],B[1:p])
+
+```{r model_code, message=FALSE, warning=FALSE}
+OneLV.nim <- nimbleCode({
+  for (i in 1:NSites) {
+    for (j in 1:NSpecies) {
+# These three lines specify the model:   
+      Y[i, j] ~ dpois(lambda[i, j]) # Likelihood: Y follows a Poisson distribution
+      log(lambda[i, j]) <- eta[i, j] # Specify the log link function
+      eta[i,j] <- beta0[j] + gammas[j]*LVsd*zs[i] # linear predictor: species + LV
+    }
+# Site scores: regression against environmental effects
+#    the Bs are the coefficients of the environmental effects
+      epsilon[i] ~ dnorm(0, sd = Sitesd) # Residual site effect
+      XB[i] <- inprod(X[i, 1:NEnv],B[1:NEnv])
       z[i] <- XB[i] + epsilon[i]
-      
   }
   
-  for(j in 1:m) {
-      omegaTR[j] <- inprod(TR[j, 1:t],O[1:t])
+  for(j in 1:NSpecies) {
+# Species effects: regression against trait effects
+#    The Os are the trait effects.
+      omegaTR[j] <- inprod(TR[j, 1:NTraits],O[1:NTraits])
       varepsilon[j] ~ dnorm(0, sd = Speciesd) # Residual
       gamma[j] <- omegaTR[j] + varepsilon[j]
-      beta0[j] ~ dnorm(0, sd = 1)
+      beta0[j] ~ dnorm(0, sd = 1) # S
   }
   
-    ## standardizing z and gamma
-    zmu <- mean(z[1:n])
-    zs[1:n] <- (z[1:n]-zmu)/sqrt(mean((z[1:n] - zmu)^2)) #scale z to unit sd and center
-    gammamu<- mean(gamma[1:m])
-    gammas[1:m] <- (gamma[1:m]-gammamu)/sqrt(mean((gamma[1:m] - gammamu)^2)) #scale gamma to unit sd and center
+# Here we standardise z and gamma, so the both have a variance of 1.
+#   The standard deviation of the latent variable is LVsd.
+    zmu <- mean(z[1:NSites])
+    zs[1:NSites] <- (z[1:NSites]-zmu)/sqrt(mean((z[1:NSites] - zmu)^2)) #scale z to unit sd and center
+    gammamu<- mean(gamma[1:NSpecies])
+    gammas[1:NSpecies] <- (gamma[1:NSpecies]-gammamu)/sqrt(mean((gamma[1:NSpecies] - gammamu)^2)) #scale gamma to unit sd and center
     # priors for scales
     Sitesd ~ dexp(1)
     Speciesd ~ dexp(1)
     LVsd ~ dexp(1)
 
     # Sign constraint
-    for(k in 1:p){
+    for(k in 1:NEnv){
       B[k] ~ dnorm(0, sd = 1)  
     }
-    for(tr in 1:t){
+    for(tr in 1:NTraits){
       O[tr] ~ dnorm(0, sd = 1)
     }
 })
 ```
 
+These models are notorious for being unidentifiable, i.e. you can get the same mean abundances from different combinations of the parameters. We therefore have to make some adjustments to the model: some of this is done in the model fitting, but for others it is easier to do it afterwards.
 
-The `nLVs` constant controls the number of latent variables, which we thus set to one.
-```{r nLVs}
-nLVs <- 1 # number of latent variables for HO
-```
+<details><summary>The details of what we do to make this identifiable are here</details>
+As formulated above, the model is unidentifiable (as latent variable models usually are). First, we standardise $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ to unit variance per latent variable to prevent scale invariance. Note that at this point the model is still invariance to sign switching. Dealing with sign switching is a bit messy. We could solve it by placing a truncated normal prior on the main diagonal entries of $\boldsymbol{B}$ or $\boldsymbol{\omega}$, but that still results in a bimodal posterior distribution for other coefficients. Hence, it is easier to leave this as it is and post-process the MCMC chains so that the diagonal entries of $\boldsymbol{B}$ are always positive.
+Note however, that for $d \gt p$ the model is still invariant to sign switches, so if the number of latent variables is greater than the number of predictors, additional constraints need to be imposed on the diagonal of $\boldsymbol{\omega}$ or on the $\boldsymbol{\epsilon}_i$'s or $\boldsymbol{\epsilon}_j$'s instead. </summary>
 
-We arrange the data in a list (that is how \texttt{Nimble} wants it) and create a function for initial values (just a simulation of the prior distributions):
-
+<details><summary>We need a function to generate initial values, but tis is boring</summary>
 ```{r init}
-dat <- list(Y = Y, X = X, TR = TR)
-
-consts <- list(n = n,
-               p = p,
-               t = t,
-               m = m,
-               d = nLVs)
 
 inits<-function(consts){
-  B = rnorm(consts$p)
-  O = rnorm(consts$t)
-  varepsilon = rnorm(consts$m)
-  epsilon = rnorm(consts$n)
+  B = rnorm(consts$NEnv)
+  O = rnorm(consts$NTraits)
+  varepsilon = rnorm(consts$NSpecies)
+  epsilon = rnorm(consts$NSites)
   list(
     B = B,
     O = O,
@@ -140,221 +161,229 @@ inits<-function(consts){
     varepsilon = varepsilon,
     Sitesd = rexp(1),
     Speciesd = rexp(1),
-    beta0 = rnorm(consts$m),
+    beta0 = rnorm(consts$NSpecies),
     LVsd = rexp(1)
   )
 }
 ```
 
-Then, we create the model object:
-```{r model, eval = F, echo=T}
-mod <- nimbleModel(code = HO, name = "HO", constants = consts, inits = inits(consts),
-                    data = dat)
-model <- compileNimble(mod)
-```
+</details>
 
-and configure the MCMC, we use a block updater for the residual of the site scores and species loadings:
-```{r mcmc, eval = F, echo=T}
-conf <- configureMCMC(model, monitors = c("beta0","Speciesd","Sitesd","LVsd","B","O","z","gamma","epsilon","varepsilon","beta0"), print = TRUE)
-conf$removeSamplers(c('epsilon', 'varepsilon'))
-conf$addSampler(target = 'epsilon', 
-                      type = "RW_block", control = list(tries = 10))
-conf$addSampler(target = 'varepsilon', 
-                      type = "RW_block", control = list(tries = 10))
-mcmc <- buildMCMC(conf)
-cmcmc <- compileNimble(mcmc, project = model)
-```
+Because we are going to parallelise the model fitting, we put the code to do this in a function:
 
-now we put it all together so that, finally, we can run the model (in parallel):
-```{r mcmc_run, eval=F, echo=F}
-library(parallel)
-nimble_cluster <- makeCluster(20)
+<details><summary>Functions to run the code are here. They may be overkill, but </summary>
 
-modit <- function(seed,dat,code,inits,consts){
-  library(nimble)
-  mod <- nimbleModel(code = code, name = "HO", constants = consts, inits = inits(consts),
-                    data = dat)
-model <- compileNimble(mod)
-  conf <- configureMCMC(model, monitors = c("beta0","Speciesd","Sitesd","LVsd","B","O","epsilon","varepsilon","beta0"), print = TRUE)
-conf$removeSamplers(c('epsilon', 'varepsilon'))
-conf$addSampler(target = 'epsilon', 
-                      type = "RW_block", control = list(tries = 10))
-conf$addSampler(target = 'varepsilon', 
-                      type = "RW_block", control = list(tries = 10))
-mcmc <- buildMCMC(conf)
-cmcmc <- compileNimble(mcmc, project = model)
-  
- return(runMCMC(cmcmc,  niter=55000, nburnin = 5000, thin=10,nchains = 1, samplesAsCodaMCMC = T))
+```{r mcmc_code}
+
+# Function to run one chain: it can be done with HMC or other MCMC algorithms.
+RunOneChain <- function(seed, dat, code, inits, consts, Nburn=5e3, NIter=5.5e4, Nthin=10, HMC = FALSE, ...) {
+  require(nimble)
+  require(nimbleHMC)
+  Mons <- c("beta0","Speciesd","Sitesd","LVsd","B","O","epsilon","varepsilon","beta0")
+  if(HMC) { # HMC everything
+    res <- nimbleHMC(code = code, constants = consts, 
+                       inits = inits(consts), data = dat, monitors = Mons, 
+                       niter=NIter, nburnin = Nburn, thin=Nthin, nchains = 1,
+                       samplesAsCodaMCMC = TRUE)
+  } else {
+    mod <- nimbleModel(code = code, name = "HO", constants = consts, inits = inits(consts),
+                       data = dat)
+    model <- compileNimble(mod)
+    conf <- configureMCMC(model, monitors = Mons, print = FALSE)
+    # Change the samplers to block update, using a nifty extension of the slice sampler
+    conf$removeSamplers(c('epsilon', 'varepsilon'))
+    conf$addSampler(target = 'epsilon', type = "AF_slice")
+    conf$addSampler(target = 'varepsilon', type = "AF_slice")
+    mcmc <- buildMCMC(conf)
+    cmcmc <- compileNimble(mcmc, project = model)
+    res <- runMCMC(cmcmc,  niter=NIter, nburnin = Nburn, thin=Nthin, 
+                   nchains = 1, samplesAsCodaMCMC = TRUE, ...)
+    
+  }
+  return(res)
 }
 
-samples <- parLapply(cl = nimble_cluster, fun = modit,
-                              dat = dat,
-                              code = HO,
-                              inits = inits,
-                              consts = consts, X = 1:20)
-stopCluster(nimble_cluster)
-save(samples,file="samples.RData")
+# Function to run parallel chains
+ParaNimble <- function(NChains, ...) {
+  require(parallel)
+  nimble_cluster <- makeCluster(4)
+  
+  samples <- parLapply(cl = nimble_cluster, X = 1:4,...)
+  stopCluster(nimble_cluster)
+
+  # Name the chains in the list
+  chains <- setNames(samples,paste0("chain", 1:length(samples)))
+  chains
+}
+
+```
+
+</details>
+
+Now we can run the MCMC.
+
+```{r MCMCrun}
+
+chains.unsgn <- ParaNimble(4, fun = RunOneChain,
+                       dat = dat,
+                       code = OneLV.nim,
+                       inits = inits, HMC = TRUE,
+#                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
+                       Nburn=1e3, NIter=2e3, Nthin=1, # for a big HMC run
+                       consts = consts)
 ```
 
 ### Results
 
-There are a lot  of parameters, so a lot of results to look at. Here, I will (for demonstration purposes) only present the traceplots of $\boldsymbol{B}$, $\boldsymbol{\omega}$, $\boldsymbol{\sigma}$ and $\boldsymbol{\delta}$, and a latent variable-plot.
+There are a lot  of parameters, so a lot of results to look at. Here, we present the traceplots of $\boldsymbol{B}$, $\boldsymbol{\omega}$, $\boldsymbol{\sigma}$ and $\boldsymbol{\delta}$, and a latent variable-plot.
 
-I have saved the results after running the model with 20 chains on a server at NTNU, so I load those here. 
-```{r results1, warning=F,message=F}
-# load("samples.RData") # list of length chains
+<details>
+    <summary>We need to change some sign constraints: the function for that is here</summary>
 
-#function for mode
-getmode <- function(v) {
-   uniqv <- unique(v)
-   uniqv[which.max(tabulate(match(v, uniqv)))]
+```{r ProcessFunction}
+# Function to apply sign constraints to one set of parameters
+# iter is one iteration of chain x that we need to correct for sign
+ProcessOneDraw <- function(iter, Consts){
+  if(is.null(Consts$nLVs)) Consts$nLVs <- 1
+  # we start by separating into the different components, B,  O, epsilon, varepsilon
+  bs <- iter[grep("^B", names(iter))]
+  os <- iter[grep("^O", names(iter))]
+  varepsilon <- matrix(iter[grep("^varepsilon", names(iter))],
+                       ncol=Consts$nLVs, nrow=Consts$NSpecies)
+  # epsilons, not to confuse with the varepsilons
+  epsilon <- matrix(iter[grep("^epsilon", names(iter))],
+                       ncol=Consts$nLVs, nrow=Consts$NSites)
+  # to matrix
+  B <- matrix(bs,ncol=Consts$nLVs,nrow=Consts$NEnv)
+  O <- matrix(os,ncol=Consts$nLVs,nrow=Consts$NTraits)
+  
+  # get sign of main diagonalentries for B
+  signs <- sign(diag(B))
+  if(all(signs>0)){ #if these are all positive, no sign swapping is needed, so  we're done
+    return(iter)
+  }else{
+    sign.mat = diag(signs, ncol= Consts$nLVs,nrow=Consts$nLVs)
+    # otherwise, we need to swap!
+    B = B%*%sign.mat
+    O = O %*% sign.mat
+    epsilon = epsilon %*% sign.mat
+    varepsilon = varepsilon %*% sign.mat
+    # now put the sign-swapped coefs back
+    iter[grep("^B", names(iter))] <- c(B)
+    iter[grep("^O", names(iter))] <- c(O)
+    iter[grep("^epsilon", names(iter))] <- c(epsilon)
+    iter[grep("^varepsilon", names(iter))] <- c(varepsilon)
+    #aaand to the next iteration
+    return(iter)
+  }
 }
 
-# Function to summarize the MCMC chains
-CalcSummary <- function(mat) {
-  Summs <- function(x) c(mean(x), median(x), getmode(x), quantile(x, probs = c(0.5, 0.025, 0.975)))
-  summary = t(apply(mat, 2, Summs))
-  colnames(summary) <- c("Mean", "Median", "Mode","St.Dev.", 
-                         "95%CI_low", "95%CI_upp")
-  summary
-}
-postProcess <- function(chains,consts){
+# Function to process a chain, looking over the iterations, to ensure identifiability
+postProcess <- function(ch, konsts, progress=FALSE){
+  require(coda)
   # chains should be a list of length nchains
-  total <- length(chains)
-  pb <- txtProgressBar(min = 0, max = total, style = 3)
+  total <- length(ch)
+  if(progress) pb <- txtProgressBar(min = 0, max = total, style = 3)
   i = 0
-  lapply(chains, function(x,consts){
-  res <- t(apply(x,1,function(iter, consts){
-    # iter is one iteration of chain x that we need to correct for sign
-    # we start by separating into the different components, B,  O, epsilon, varepsilon
-    bs <- iter[grep("B",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))]
-    os <- iter[grep("O",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))]
-    varepsilon <- matrix(iter[grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))],ncol=consts$d, nrow=consts$m)
-        # epsilons, not to confuse with the varepsilons
-    epsilon <- matrix(iter[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))][grep("epsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))])))],ncol=consts$d, nrow = consts$n)
-    
-    # to matrix
-    B <- matrix(bs,ncol=consts$d,nrow=consts$p)
-    O <- matrix(os,ncol=consts$d,nrow=consts$t)
-    
-    # get sign of main diagonalentries for B
-    signs <- sign(diag(B))
-    if(all(signs>0)){ #if these are all positive, no sign swapping is needed, so  we're done
-      return(iter)
-    }else{
-      sign.mat = diag(signs, ncol= consts$d,nrow=consts$d)
-      # otherwise, we need to swap!
-      B = B%*%sign.mat
-      O = O %*% sign.mat
-      epsilon = epsilon %*% sign.mat
-      varepsilon = varepsilon %*% sign.mat
-      # now put the sign-swapped coefs back
-       iter[grep("B",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))] <- c(B)
-       iter[grep("O",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))] <- c(O)
-       iter[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))][grep("epsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))])))] <- c(epsilon)
-       iter[grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", names(iter)))] <- c(varepsilon)
-       #aaand to the next iteration
-       return(iter)
-    }
-  }, consts = consts))
-  i <<- i+1
-  # update progressbar
-  setTxtProgressBar(pb, i)
-  # restore parameter names
-  colnames(res) <- colnames(x)
-  return(res)
-  }, consts = consts)
+  lst <- lapply(ch, function(x, Cnsts){
+    res <- t(apply(as.matrix(x),1,ProcessOneDraw, Consts = Cnsts))
+    i <<- i+1
+    # update progress bar
+    if(progress) setTxtProgressBar(pb, i)
+    # restore parameter names
+    colnames(res) <- colnames(x)
+    return(as.mcmc(res))
+  }, Cnsts = konsts)
+ as.mcmc.list(lst)
 }
 
-# Name the chains in the list
-# chains <- setNames(samples,paste0("chain", 1:length(samples)))
+```
+</details>
+
+Nowe we can look at some lovely chains, to see that they have converged. First the environmental effects
+
+```{r results1, warning=FALSE, message=FALSE}
 
 # post-process chains for sign-swapping
-# chains <- postProcess(chains, consts = consts)
-# I have already done that so loading it here
-load(file="chains_post.RData")
-# also create a matrix to get summary stats
-chains.mat <- do.call(rbind,chains)
-colnames(chains.mat) <- colnames(chains[[1]])
-summary = CalcSummary(chains.mat)
-
-# Put together in a list
-out <- list(samples = chains, summary = summary)
+chains <- postProcess(chains.unsgn, konsts = consts)
+summ.HO = summary(chains)
 
 library(basicMCMCplots)
 par(mfrow=c(1,1))
-# chainsPlot(out$samples, var = c("epsilon"), legend = F, densityplot = F)
-chainsPlot(out$samples, var = c("B"), legend = F,traceplot=F)
-chainsPlot(out$samples, var = c("O"), legend = F,traceplot=F)
-# chainsPlot(out$samples, var = c("Speciesd"), legend = F)
-# chainsPlot(out$samples, var = c("Sitesd"), legend = F)
-# chainsPlot(out$samples, var = c("LVsd"), legend = F)
+chainsPlot(chains, var = c("B"), legend = F,traceplot=T)
 
-# dev <- lapply(chains,function(x)x[,grep("deviance",colnames(x))])
-# dev.rows<-lapply(dev,function(x)rowSums(x))
-# unlist(lapply(dev.rows,which.max))#?
+```
+
+Then the trait effects
+
+```{r ResO, warning=FALSE,message=FALSE, fig.height=10}
+chainsPlot(chains, var = c("O"), legend = F,traceplot=TRUE)
+
 ```
 
 These look quite OK (after post-processing). Now we can create a plot of the LV-scores against their indices to inspect the results:
-```{r plot1, warning=F,message=F}
-par(mfrow=c(1,2))
+
+```{r plot1, warning=FALSE,message=FALSE, fig.height=6}
+
+ExtractMeans <- function(summ, name, d=1) {
+  if(is.null(d)) d <- 1
+  var <- summ$statistics[grep(paste0('^', name), rownames(summ$statistics)),"Mean"]
+  matrix(var,ncol=d)
+}
 
 # First a plot of the site scores
-epsilon <- data.frame(out$summary[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),][grep("epsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),]))),])
-epsilon <- matrix(epsilon$Mean,ncol=consts$d)
-
-B <- data.frame(out$summary[grep("B",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-B <- matrix(B$Mean,ncol=consts$d)
-
-LVs <- X%*%B+epsilon
-#LVs
-plot(LVs,type="n", xlab="Sites", ylab="Latent variable 1", main = "Sites")
-text(LVs,labels=1:consts$n)
+eps.m <- ExtractMeans(summ.HO, name="epsilon", d=consts$nLVs)
+B.m <- ExtractMeans(summ.HO, name="B", d=consts$nLVs)
+LVs <- X%*%B.m+eps.m
 
 # Now the species loadings
-varepsilon <- data.frame(out$summary[grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-varepsilon <- matrix(varepsilon$Mean,ncol=consts$d)
+vareps.m <- ExtractMeans(summ.HO, name="varepsilon", d=consts$nLVs)
+O.m <- ExtractMeans(summ.HO, name="O", d=consts$nLVs)
+gamma <- TR%*%O.m+vareps.m
 
-O <- data.frame(out$summary[grep("O",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-O <- matrix(O$Mean,ncol=consts$d)
+par(mfrow=c(1,2))
+plot(LVs,type="n", xlab="Sites", ylab="Latent variable 1", main = "Sites")
+text(LVs,labels=1:consts$NSites)
 
-gamma <- TR%*%O+varepsilon
-#LVs
 plot(gamma,type="n", xlab="Species", ylab="Latent variable 1", main = "Species")
 text(gamma,labels=vegan::make.cepnames(colnames(Y)))
+
 ```
 
 
 ## More dimensions
 
-More than one dimension requires adding extra identifiability constraints. 
+More than one dimension requires adding extra identifiability constraints. Now we have two or more latent variables, we also have to worry about rotating them.
 
+<details><summary>For those who are interested, this is how we deal with the rotations</details>
 There are various ways to place the constraints, some more numerically stable than others. Generally, we note that the model on the link scale is similar to existing matrix decompositions, so that much on the required constraints can be learned from those.
  
 To prevent rotational invariance, we require $\boldsymbol{B}$ and $\boldsymbol{\omega}$ to have zeros above the main diagonal. van der Veen *et al* (2023) instead assumed $\boldsymbol{B}$ to be a semi-orthogonal matrix as they encountered numerical instability with the constraint that we impose here. However, their constraint would require sampling on constrained parameter spaces, which is difficult, while this constraint formulation allows to use standard out-of-the-box Markov Chain Monte carlo samplers (also, it seems to work fine here). Note, that when $d \gt p,t $ the model is again rotationally invariant, and additional constraints (e.g., order constraints for the latent variables as in a varimax rotation) will need to be added.
+</details>
 
-Consequently, the model code here is:
-```{r model2_code, message=F, warning=F}
+The new model code is almost the same as before:
+
+```{r model2_code, message=FALSE, warning=FALSE}
 # Update our constants from before with the new number of LVs, rest remains the same
-consts$d <- nLVs <- 2
+consts$nLVs <- nLVs <- 2
 # Model code
-HO <- nimbleCode({
-  for (i in 1:n) {
-    for (j in 1:m) {
-      eta[i,j] <- beta0[j] + sum(gammas[j,1:d]*LVsd[1:d]*zs[i,1:d])
+HO.nim <- nimbleCode({
+  for (i in 1:NSites) {
+    for (j in 1:NSpecies) {
+      eta[i,j] <- beta0[j] + sum(gammas[j,1:nLVs]*LVsd[1:nLVs]*zs[i,1:nLVs])
       log(lambda[i, j]) <- eta[i, j]
       Y[i, j] ~ dpois(lambda[i, j])
     }      
-    for (q in 1:d) {
-      XB[i, q] <- sum(X[i, 1:p]*B[1:p, q])
+    for (q in 1:nLVs) {
+      XB[i, q] <- sum(X[i, 1:NEnv]*B[1:NEnv, q])
       epsilon[i,q] ~ dnorm(0,Sitesd[q])#Residual
       z[i,q] <- XB[i,q] + epsilon[i,q]
     }
   }
   
-  for(j in 1:m) {
-    for (q in 1:d) {
-      omegaTR[j, q] <- sum(TR[j, 1:t]*O[1:t, q])
+  for(j in 1:NSpecies) {
+    for (q in 1:nLVs) {
+      omegaTR[j, q] <- sum(TR[j, 1:NTraits]*O[1:NTraits, q])
       varepsilon[j,q] ~ dnorm(0,Speciesd[q]) # Residual
       gamma[j,q] <- omegaTR[j,q] + varepsilon[j,q]
     }
@@ -363,22 +392,22 @@ HO <- nimbleCode({
   }
   # Constraints to 0 on upper diagonal
   # stole some code from Boral for this - thanks Francis
-  for(i in 1:(d-1)) { 
-    for(j in (i+1):(d)) {
+  for(i in 1:(nLVs-1)) { 
+    for(j in (i+1):(nLVs)) {
       B[i,j] <- 0 
       O[i,j] <- 0
     } 
   }
   
-  for(i in 1:d) { 
+  for(i in 1:nLVs) { 
     # diagonal elements
     B[i,i] ~ dnorm(0,1)
     O[i,i] ~ dnorm(0,1)#T(dnorm(0,1),0,Inf)
     ## standardizing z and gamma
-    zmu[i] <- mean(z[1:n,i])
-    zs[1:n,i] <- (z[1:n,i]-zmu[i])/sqrt(mean((z[1:n,i] - zmu[i])^2)) #scale z to unit sd and center
-    gammamu[i] <- mean(gamma[1:m,i])
-    gammas[1:m,i] <- (gamma[1:m,i]-gammamu[i])/sqrt(mean((gamma[1:m,i] - gammamu[i])^2)) #scale gamma to unit sd and center
+    zmu[i] <- mean(z[1:NSites,i])
+    zs[1:NSites,i] <- (z[1:NSites,i]-zmu[i])/sqrt(mean((z[1:NSites,i] - zmu[i])^2)) #scale z to unit sd and center
+    gammamu[i] <- mean(gamma[1:NSpecies,i])
+    gammas[1:NSpecies,i] <- (gamma[1:NSpecies,i]-gammamu[i])/sqrt(mean((gamma[1:NSpecies,i] - gammamu[i])^2)) #scale gamma to unit sd and center
     # priors for scales
     Sitesd[i] ~ dexp(1)
     Speciesd[i] ~ dexp(1)
@@ -386,188 +415,155 @@ HO <- nimbleCode({
     } 
   
   ## Free lower diagonals
-  for(i in 2:d) { 
+  for(i in 2:nLVs) { 
     for(j in 1:(i-1)) { 
       B[i,j] ~ dnorm(0,1)
       O[i,j] ~ dnorm(0,1)
       } 
     }
-  for(i in (d+1):p) { for(j in 1:(d)) { B[i,j] ~dnorm(0,1) } } ## All other elements
-  for(i in (d+1):t) { for(j in 1:(d)) { O[i,j] ~dnorm(0,1) } } ## All other elements
+  for(i in (nLVs+1):NEnv) { for(j in 1:(nLVs)) { B[i,j] ~dnorm(0,1) } } ## All other elements
+  for(i in (nLVs+1):NTraits) { for(j in 1:(nLVs)) { O[i,j] ~dnorm(0,1) } } ## All other elements
 
 })
 ```
 
-We create a new function to simulate starting values from the prior distributions:
+<details><summary>We create a new function to simulate starting values from the prior distributions, which we can hide away</summary>
+
 ```{r init2}
 inits<-function(consts){
-  B = matrix(rnorm(consts$d*consts$p),ncol=consts$d)
+  B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
   B[upper.tri(B)] = 0
-  O = matrix(rnorm(consts$d*consts$t),nrow=consts$t)
+  O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
   O[upper.tri(O)] = 0
-  varepsilon = mvtnorm::rmvnorm(consts$m,rep(0,consts$d),diag(consts$d))
-  epsilon = mvtnorm::rmvnorm(consts$n,rep(0,consts$d),diag(consts$d))
+  varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
+  epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
   list(
     B = B,
     O = O,
     epsilon = epsilon,
     varepsilon = varepsilon,
-    Sitesd = rexp(consts$d),
-    Speciesd = rexp(consts$d),
-    beta0 = rnorm(consts$m),
-    LVsd = rexp(consts$d)
+    Sitesd = rexp(consts$nLVs),
+    Speciesd = rexp(consts$nLVs),
+    beta0 = rnorm(consts$NSpecies),
+    LVsd = rexp(consts$nLVs)
   )
 }
 ```
+<details>
 
-put it all together, and run it:
-```{r mcmc2_run, eval = F}
-library(parallel)
-nimble_cluster <- makeCluster(20)
+And run it:
 
-modit <- function(seed,dat,code,inits,consts){
-  library(nimble)
-  mod <- nimbleModel(code = code, name = "HO", constants = consts, inits = inits(consts),
-                    data = dat)
-model <- compileNimble(mod)
-  conf <- configureMCMC(model, monitors = c("beta0","Speciesd","Sitesd","LVsd","B","O","epsilon","varepsilon","beta0"), print = TRUE)
-conf$removeSamplers(c('epsilon', 'varepsilon'))
-conf$addSampler(target = 'epsilon', 
-                      type = "RW_block", control = list(tries = 10))
-conf$addSampler(target = 'varepsilon', 
-                      type = "RW_block", control = list(tries = 10))
-mcmc <- buildMCMC(conf)
-cmcmc <- compileNimble(mcmc, project = model)
-  
- return(runMCMC(cmcmc,  niter=1000000, nburnin = 50000, thin=100,nchains = 1, samplesAsCodaMCMC = T))
-}
+```{r mcmc2_run}
 
-samples <- parLapply(cl = nimble_cluster, fun = modit,
-                              dat = dat,
-                              code = HO,
-                              inits = inits,
-                              consts = consts, X = 1:20)
-stopCluster(nimble_cluster)
-save(samples,file="samples2.RData")
-#new run changes niter to 1mil, nburn 50k, thin 100
+HO.2LV <- ParaNimble(4, fun = RunOneChain,
+                       dat = dat,
+                       code = HO.nim,
+                       inits = inits, HMC=TRUE,
+#                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
+    # niter=1e6, nburnin = 5e4, thin=1e2,nchains = 1, 
+                       Nburn=1e3, NIter=4e3, Nthin=1, # for a small run
+                       consts = consts)
+
 ```
 
 ## Results
 
-I have saved the results after running the model with 20 chains on a server at NTNU, so I load those here. 
-```{r results2, warning=F,message=F}
-# load("samples2.RData") # list of length chains
-par(mfrow=c(1,1))
-# Name the chains in the list
-# chains <- setNames(samples,paste0("chain", 1:length(samples)))
+Again, check they work. Environment first:
 
+```{r results2, fig.height=10}
 # post-process chains for sign-swapping
-#chains <- postProcess(chains, consts = consts)
-# I have already done that so loading it here
-# save(chains,file="chains_post2.RData")
-load("chains_post2.RData")
-# also create a matrix to get summary stats
-chains.mat <- do.call(rbind,chains)
-colnames(chains.mat) <- colnames(chains[[1]])
-summary = CalcSummary(chains.mat)
+chains2LV <- postProcess(HO.2LV, konsts = consts)
+summ.HO2LV = summary(chains2LV)
 
-# Put together in a list
-out <- list(samples = chains, summary = summary)
+chains2LV <- postProcess(HO.2LV, konsts = consts)
 
-library(basicMCMCplots)
-# chainsPlot(out$samples, var = c("epsilon[10, 2]"), legend = F, densityplot = F)
-# chainsPlot(out$samples, var = c("beta0"), legend = F,densityplot = F)
-chainsPlot(out$samples, var = c("B"), legend = F, traceplot=F)
-chainsPlot(out$samples, var = c("O"), legend = F,traceplot=F)
-# chainsPlot(out$samples, var = c("Speciesd"), legend = F)
-# chainsPlot(out$samples, var = c("Sitesd"), legend = F)
-# chainsPlot(out$samples, var = c("LVsd"), legend = F)
+par(mfrow=c(1,1))
+chainsPlot(chains2LV, var = c("B"), legend = F, traceplot=TRUE)
+
 ```
 
-The traceplots look quite OK. Now, we can make two-dimensional ordination plots of sites and species, with their predictor effects:
+And the trait effects:
 
-```{r results2_site, warning=F,message=F}
-par(mfrow=c(1,2))
+```{r ResO2LV, warning=FALSE,message=FALSE, fig.height=12}
+chainsPlot(chains2LV, var = c("O"), legend = F, traceplot=TRUE)
+
+```
+
+
+The traceplots look quite OK. Now, we can make two-dimensional ordination plots of sites and species, with their predictor effects.
+
+<details><summary>We need a function to plot the arrows, which is hidden here</summary>
+```{r AddArrows}
+AddArrows <- function(coords, marg= par("usr"), col=2) {
+  origin <- c(mean(marg[1:2]), mean(marg[3:4]))
+  Xlength <- sum(abs(marg[1:2]))/2
+  Ylength <- sum(abs(marg[3:4]))/2
+  ends <- coords / max(abs(coords)) * min(Xlength, Ylength) * .8
+  arrows(
+    x0 = origin[1],
+    y0 = origin[2],
+    x1 = ends[,
+              1] + origin[1],
+    y1 = ends[, 2] + origin[2],
+    col = col,
+    length = 0.1)
+  text(
+    x = origin[1] + ends[, 1] * 1.1,
+    y = origin[2] + ends[, 2] * 1.1,
+    labels = rownames(coords),
+    col = col)
+  
+}
+
+```
+</details>
+
+```{r results2_site}
 
 # First a plot of the site scores
-epsilon <- data.frame(out$summary[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),][grep("epsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary[-grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),]))),])
-epsilon <- matrix(epsilon$Mean,ncol=consts$d)
-
-B <- data.frame(out$summary[grep("B",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-B <- matrix(B$Mean,ncol=consts$d)
-
-LVs <- X%*%B+epsilon
-#LVs
-plot(LVs,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Sites")
-text(LVs,labels=1:consts$n)
-
-# plot arrows
-marg <- par("usr")
-origin <- c(mean(marg[1:2]), mean(marg[3:4]))
-Xlength <- sum(abs(marg[1:2]))/2
-Ylength <- sum(abs(marg[3:4]))/2
-ends <- B / max(abs(B)) * min(Xlength, Ylength) * .8
-arrows(
-  x0 = origin[1],
-  y0 = origin[2],
-  x1 = ends[,
-            1] + origin[1],
-  y1 = ends[, 2] + origin[2],
-  col = "red",
-  length = 0.1)
-text(
-  x = origin[1] + ends[, 1] * 1.1,
-  y = origin[2] + ends[, 2] * 1.1,
-  labels = colnames(X),
-  col = "red")
+eps.m <- ExtractMeans(summ.HO2LV, name="epsilon", d=consts$nLVs)
+B.m <- ExtractMeans(summ.HO2LV, name="B", d=consts$nLVs)
+rownames(B.m) <- colnames(X)
+LVs <- X%*%B.m+eps.m
 
 # Now the species loadings
-varepsilon <- data.frame(out$summary[grep("varepsilon",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-varepsilon <- matrix(varepsilon$Mean,ncol=consts$d)
+vareps.m <- ExtractMeans(summ.HO2LV, name="varepsilon", d=consts$nLVs)
+O.m <- ExtractMeans(summ.HO2LV, name="O", d=consts$nLVs)
+rownames(O.m) <- colnames(TR)
+gamma <- TR%*%O.m+vareps.m
 
-O <- data.frame(out$summary[grep("O",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),])
-O <- matrix(O$Mean,ncol=consts$d)
 
-gamma <- TR%*%O+varepsilon
+par(mfrow=c(1,2))
+
+#LVs
+plot(LVs,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Sites")
+text(LVs,labels=1:consts$NSites)
+AddArrows(marg = par("usr"), coords=B.m, col="red")
 
 #gammas
 plot(gamma,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Species")
 text(gamma,labels=vegan::make.cepnames(colnames(Y)))
+AddArrows(marg = par("usr"), coords=O.m, col="blue")
 
-# plot arrows
-marg <- par("usr")
-origin <- c(mean(marg[1:2]), mean(marg[3:4]))
-Xlength <- sum(abs(marg[1:2]))/2
-Ylength <- sum(abs(marg[3:4]))/2
-ends <- O / max(abs(O)) * min(Xlength, Ylength) * .8
-arrows(
-  x0 = origin[1],
-  y0 = origin[2],
-  x1 = ends[,
-            1] + origin[1],
-  y1 = ends[, 2] + origin[2],
-  col = "blue",
-  length = 0.1)
-text(
-  x = origin[1] + ends[, 1] * 1.1,
-  y = origin[2] + ends[, 2] * 1.1,
-  labels = colnames(TR),
-  col = "blue")
+
 ```
 
 We can also look at some summary statistics for the scale parameters of the latent variables, species-specific residuals and site-specific residuals, respectively:
-```{r sum_stats, message=F, warning=F}
-out$summary[grep("LVsd",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),]
-LVsd <- out$summary[grep("LVsd",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),"Mean"]
-out$summary[grep("Speciesd",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),]
-Speciesd <- out$summary[grep("Speciesd",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),"Mean"]
-out$summary[grep("Sitesd",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),]
-Sitesd <- out$summary[grep("Sitesd",gsub(".*?(\\b[A-Za-z0-9 ]+\\b).*","\\1", row.names(out$summary))),"Mean"]
+
+```{r sum_stats}
+
+SDs <- summ.HO2LV$statistics[grep("sd", rownames(summ.HO2LV$statistics)),c("Mean", "SD")]
+knitr::kable(SDs, digits=2, format = "html", table.attr = "style='width:30%;'")
+
 ```
-these tell us how well the predictors explain the ordination; the species- and site-specific scale parameters would be zero if the predictors fully explained the ordination. The scale parameters for the latent variables are similar to singular values (the square root of eigenvalues) in a classical ordination; they reflect a dimension its importance to the response.
+
+These tell us how well the predictors explain the ordination; the species- and site-specific scale parameters would be zero if the predictors fully explained the ordination. The scale parameters for the latent variables are similar to singular values (the square root of eigenvalues) in a classical ordination; they reflect a dimension its importance to the response.
 
 ## Residual covariance matrix
 
+The covariance of species is determined by traits, LV-specific variation and sites' residual variation, and the covariance between sites is determined by the environment, LV-specific variation and species' residual variation.
+
+<details><summary>The maths behind this is covered in here</summary>
 The residual covariance matrix of the model (where you calculate species associations from) is determined by three terms:
 
 1) $\boldsymbol{X}\boldsymbol{B}\boldsymbol{\Sigma}\boldsymbol{\varepsilon}_j \sim \mathcal{N}(0,\boldsymbol{X}\boldsymbol{B}\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\delta}^2)\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{X}^\top)$
@@ -618,22 +614,23 @@ and
 \boldsymbol{x}_i^\top\boldsymbol{B}\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\delta}^2)\boldsymbol{\Sigma}\boldsymbol{B}^\top\boldsymbol{x}_{i2} + 
 2\text{tr}\{\text{diag}(\boldsymbol{\delta}^2)\boldsymbol{\Sigma}\text{diag}(\boldsymbol{\sigma}^2)\boldsymbol{\Sigma}\}.
 \end{equation}
+</details>
 
+ We can visualize those matrices here for (e.g.,) the first site and first species, respectively.
 
-This shows that the covariance of species is determined by traits, LV-specific variation and sites' residual variation, and the covariance between sites is determined by the environment, LV-specific variation and species' residual variation. We can visualize those matrices here for (e.g.,) the first site and first species, respectively.
-```{r residualcov, eval = T}
+```{r residualcov}
 #species
-spec.mat <- matrix(0,nrow=m,ncol=m)
-Sigma <- diag(LVsd^2)
-Sigma.sp <- diag(Speciesd^2)
-Sigma.si <- diag(Sitesd^2)
+spec.mat <- matrix(0,nrow=NSpecies,ncol=NSpecies)
+Sigma <- diag(SDs[grep("LV", rownames(SDs)),1]^2)
+Sigma.sp <- diag(SDs[grep("Specie", rownames(SDs)),1]^2)
+Sigma.si <- diag(SDs[grep("Site", rownames(SDs)),1]^2)
 
-for(j in 1:m){
-  for(j2 in 1:m){
+for(j in 1:NSpecies){
+  for(j2 in 1:NSpecies){
     if(j==j2){
-      spec.mat[j,j2] = X[1,,drop=F]%*%B%*%Sigma%*%Sigma.sp%*%t(B)%*%t(X[1,,drop=F])
+      spec.mat[j,j2] = X[1,,drop=F]%*%B.m%*%Sigma%*%Sigma.sp%*%t(B.m)%*%t(X[1,,drop=F])
     }
-    spec.mat[j,j2] = spec.mat[j,j2] + TR[j,,drop=F]%*%O%*%Sigma%*%Sigma.si%*%Sigma%*%t(O)%*%t(TR[j2,,drop=F]) + 2*sum(diag((Sigma.sp%*%Sigma%*%Sigma.si%*%Sigma)))
+    spec.mat[j,j2] = spec.mat[j,j2] + TR[j,,drop=F]%*%O.m%*%Sigma%*%Sigma.si%*%Sigma%*%t(O.m)%*%t(TR[j2,,drop=F]) + 2*sum(diag((Sigma.sp%*%Sigma%*%Sigma.si%*%Sigma)))
   }
 }
 
@@ -642,18 +639,18 @@ colnames(spec.cor.mat) <- row.names(spec.cor.mat) <- colnames(Y)
 corrplot::corrplot(spec.cor.mat,type = "lower",order = "AOE", main = "Species", mar = c(1,1,1,1),tl.srt=45,tl.cex = .5)
 
 #sites
-site.mat <- matrix(0,nrow=n,ncol=n)
+site.mat <- matrix(0,nrow=NSites,ncol=NSites)
 
-for(i in 1:n){
-  for(i2 in 1:n){
+for(i in 1:NSites){
+  for(i2 in 1:NSites){
     if(i==i2){
-      site.mat[i,i2] = TR[1,,drop=F]%*%O%*%Sigma%*%Sigma.si%*%t(O)%*%t(TR[1,,drop=F])
+      site.mat[i,i2] = TR[1,,drop=F]%*%O.m%*%Sigma%*%Sigma.si%*%t(O.m)%*%t(TR[1,,drop=F])
     }
-    site.mat[i,i2] = site.mat[i,i2] + X[i,,drop=F]%*%B%*%Sigma%*%Sigma.sp%*%Sigma%*%t(B)%*%t(X[i2,,drop=F]) + 2*sum(diag((Sigma.sp%*%Sigma%*%Sigma.si%*%Sigma)))
+    site.mat[i,i2] = site.mat[i,i2] + X[i,,drop=F]%*%B.m%*%Sigma%*%Sigma.sp%*%Sigma%*%t(B.m)%*%t(X[i2,,drop=F]) + 2*sum(diag((Sigma.sp%*%Sigma%*%Sigma.si%*%Sigma)))
   }
 }
 
 site.cor.mat <- cov2cor(site.mat)
-colnames(site.cor.mat) <- row.names(site.cor.mat) <- paste("Site", 1:n)
+colnames(site.cor.mat) <- row.names(site.cor.mat) <- paste("Site", 1:NSites)
 corrplot::corrplot(site.cor.mat,type = "lower",order = "AOE", main = "Sites", mar = c(3,3,3,3),tl.srt=45,tl.cex = .5)
 ```

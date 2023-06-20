@@ -75,7 +75,7 @@ CreateModel <- function(abund, traits, env, n_latent=1,
   eta <- sweep(thingo %*% gamma.sc, 2, int, FUN = "+")
   
   lambda <- exp(eta)
-  distribution(y) <- poisson(lambda)
+  distribution(abund) <- poisson(lambda)
   
   m <- model(int, B, omega, epsilon_sd,varepsilon_sd, epsilon, varepsilon,
              LVscales, R2.gamma, R2.z)
