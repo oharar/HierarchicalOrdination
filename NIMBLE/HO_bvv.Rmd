@@ -142,11 +142,11 @@ OneLV.nim <- nimbleCode({
 
 These models are notorious for being unidentifiable, i.e. you can get the same mean abundances from different combinations of the parameters. We therefore have to make some adjustments to the model: some of this is done in the model fitting, but for others it is easier to do it afterwards.
 
-<details><summary>The details of what we do to make this identifiable are here</details>
+<details><summary>The details of what we do to make this identifiable are here</summary>
 As formulated above, the model is unidentifiable (as latent variable models usually are). First, we standardise $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ to unit variance per latent variable to prevent scale invariance. Note that at this point the model is still invariance to sign switching. Dealing with sign switching is a bit messy. We could solve it by placing a truncated normal prior on the main diagonal entries of $\boldsymbol{B}$ or $\boldsymbol{\omega}$, but that still results in a bimodal posterior distribution for other coefficients. Hence, it is easier to leave this as it is and post-process the MCMC chains so that the diagonal entries of $\boldsymbol{B}$ are always positive.
-Note however, that for $d \gt p$ the model is still invariant to sign switches, so if the number of latent variables is greater than the number of predictors, additional constraints need to be imposed on the diagonal of $\boldsymbol{\omega}$ or on the $\boldsymbol{\epsilon}_i$'s or $\boldsymbol{\epsilon}_j$'s instead. </summary>
+Note however, that for $d \gt p$ the model is still invariant to sign switches, so if the number of latent variables is greater than the number of predictors, additional constraints need to be imposed on the diagonal of $\boldsymbol{\omega}$ or on the $\boldsymbol{\epsilon}_i$'s or $\boldsymbol{\epsilon}_j$'s instead. </details>
 
-<details><summary>We need a function to generate initial values, but tis is boring</summary>
+<details><summary>We need a function to generate initial values, but this is boring</summary>
 ```{r init}
 
 inits<-function(consts){
@@ -171,7 +171,7 @@ inits<-function(consts){
 
 Because we are going to parallelise the model fitting, we put the code to do this in a function:
 
-<details><summary>Functions to run the code are here. They may be overkill, but </summary>
+<details><summary>Functions to run the code are here. They may be overkill, but they work.</summary>
 
 ```{r mcmc_code}
 
@@ -241,6 +241,10 @@ There are a lot  of parameters, so a lot of results to look at. Here, we present
     <summary>We need to change some sign constraints: the function for that is here</summary>
 
 ```{r ProcessFunction}
+
+VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon")
+
+
 # Function to apply sign constraints to one set of parameters
 # iter is one iteration of chain x that we need to correct for sign
 ProcessOneDraw <- function(iter, Consts){
@@ -257,7 +261,7 @@ ProcessOneDraw <- function(iter, Consts){
   B <- matrix(bs,ncol=Consts$nLVs,nrow=Consts$NEnv)
   O <- matrix(os,ncol=Consts$nLVs,nrow=Consts$NTraits)
   
-  # get sign of main diagonalentries for B
+  # get sign of main diagonal entries for B
   signs <- sign(diag(B))
   if(all(signs>0)){ #if these are all positive, no sign swapping is needed, so  we're done
     return(iter)
@@ -355,7 +359,7 @@ text(gamma,labels=vegan::make.cepnames(colnames(Y)))
 
 More than one dimension requires adding extra identifiability constraints. Now we have two or more latent variables, we also have to worry about rotating them.
 
-<details><summary>For those who are interested, this is how we deal with the rotations</details>
+<details><summary>For those who are interested, this is how we deal with the rotations</summary>
 There are various ways to place the constraints, some more numerically stable than others. Generally, we note that the model on the link scale is similar to existing matrix decompositions, so that much on the required constraints can be learned from those.
  
 To prevent rotational invariance, we require $\boldsymbol{B}$ and $\boldsymbol{\omega}$ to have zeros above the main diagonal. van der Veen *et al* (2023) instead assumed $\boldsymbol{B}$ to be a semi-orthogonal matrix as they encountered numerical instability with the constraint that we impose here. However, their constraint would require sampling on constrained parameter spaces, which is difficult, while this constraint formulation allows to use standard out-of-the-box Markov Chain Monte carlo samplers (also, it seems to work fine here). Note, that when $d \gt p,t $ the model is again rotationally invariant, and additional constraints (e.g., order constraints for the latent variables as in a varimax rotation) will need to be added.
