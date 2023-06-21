@@ -8,7 +8,7 @@ date: "2023-02-08"
 knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
 ```
 
-# An Example of Hirearchical Ordination
+# An Example of Hierarchical Ordination
 
 This document describes fitting a hierarchical ordination to data, including code and the nasty details that are needed.
 
@@ -130,7 +130,6 @@ OneLV.nim <- nimbleCode({
     Speciesd ~ dexp(1)
     LVsd ~ dexp(1)
 
-    # Sign constraint
     for(k in 1:NEnv){
       B[k] ~ dnorm(0, sd = 1)  
     }
@@ -399,14 +398,12 @@ HO.nim <- nimbleCode({
   for(i in 1:(nLVs-1)) { 
     for(j in (i+1):(nLVs)) {
       B[i,j] <- 0 
-      O[i,j] <- 0
     } 
   }
   
   for(i in 1:nLVs) { 
     # diagonal elements
     B[i,i] ~ dnorm(0,1)
-    O[i,i] ~ dnorm(0,1)#T(dnorm(0,1),0,Inf)
     ## standardizing z and gamma
     zmu[i] <- mean(z[1:NSites,i])
     zs[1:NSites,i] <- (z[1:NSites,i]-zmu[i])/sqrt(mean((z[1:NSites,i] - zmu[i])^2)) #scale z to unit sd and center
@@ -415,19 +412,23 @@ HO.nim <- nimbleCode({
     # priors for scales
     Sitesd[i] ~ dexp(1)
     Speciesd[i] ~ dexp(1)
-    LVsd[i] ~ dexp(.1)
+    LVsd[i] ~ dexp(1)
     } 
   
   ## Free lower diagonals
   for(i in 2:nLVs) { 
     for(j in 1:(i-1)) { 
       B[i,j] ~ dnorm(0,1)
-      O[i,j] ~ dnorm(0,1)
       } 
     }
   for(i in (nLVs+1):NEnv) { for(j in 1:(nLVs)) { B[i,j] ~dnorm(0,1) } } ## All other elements
-  for(i in (nLVs+1):NTraits) { for(j in 1:(nLVs)) { O[i,j] ~dnorm(0,1) } } ## All other elements
 
+  # Prior for trait effects
+    for(tr in 1:t){
+    for(q in 1:d){
+      O[tr,q] ~dnorm(0,1)
+    }
+  }
 })
 ```
 
@@ -438,7 +439,6 @@ inits<-function(consts){
   B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
   B[upper.tri(B)] = 0
   O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
-  O[upper.tri(O)] = 0
   varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
   epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
   list(
