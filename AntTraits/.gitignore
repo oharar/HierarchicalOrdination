@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+Posts.pdf
+inst/doc
+/doc/
+/Meta/
+/antTraits_cache/
+/antTraits_files/
