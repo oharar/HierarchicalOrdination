@@ -720,18 +720,20 @@ rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotati
   
   # Rotate variables
   for(nm in unique(c(RotateBy, ToRotate))) {
-    ch <- RotateVar(vec=ch, name=nm, rotmat=loadings.r$Th, retmat = FALSE)
+    ch <- RotateVar(vec=ch, name=nm, rotmat=t(loadings.r$Th), retmat = FALSE)
   }
   for(nm in unique(c(SDby, SDToRotate))) {
-    ch <- RotateSD(vec=ch, name=nm, rotmat=loadings.r$Th)
+    ch <- RotateSD(vec=ch, name=nm, rotmat=t(loadings.r$Th))
   }
   ch
 }
 
 
 RotateChains <- function(mcmc.lst, RotateBy="z", SDby = "sd.LV", 
-                         ToRotate=c("B", "epsilon", "gamma", "z", "O", "varepsilon"), 
+                         ToRotate=c("B", "epsilon", "gamma", "O", "varepsilon"), 
                          SDToRotate=c("sd.Site", "sd.Species"), ...) {
+  if(SDby%in%SDToRotate)stop("'SDby' should not be present in 'SDToRotate'.")
+  if(RotateBy%in%ToRotate)stop("'RotateBy' should not be present in 'ToRotate'.")
   rotated <- lapply(mcmc.lst, function(mcmc) {
     rot <- apply(mcmc, 1, rotate2LV, RotateBy=RotateBy, SDby = SDby, 
                          ToRotate=ToRotate, SDToRotate=SDToRotate, ...)
@@ -781,20 +783,23 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
                        Nburn=1e3, NIter=3e3, Nthin=1, # for a full run
                        consts = consts)
 
-# Varimax rotation
-
-chains2LV.r <- RotateChains(HO.2LV, rotation.fn="Varimax")
-
 # Re-scale LVs etc.
-chains2LV.r2 <- RescaleChains(chains2LV.r, ScaleBy="gamma", 
+chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy="gamma", 
                               SDTorescale=c("sd.LV", "sd.Species"), 
                               ToRescale=c("gamma",  "O", "varepsilon"))
-chains2LV.r3 <- RescaleChains(chains2LV.r2, ScaleBy="z", 
+
+
+# Varimax rotation
+# scale = TRUE so that Z*Sigma gets rotated. Otherwise just Z.
+chains2LV.r <- RotateChains(chains2LV.sc, rotation.fn="Varimax", scale = T)
+
+# Now scale LVs
+chains2LV.sc2 <- RescaleChains(chains2LV.r, ScaleBy="z", 
                               SDTorescale=c("sd.LV", "sd.Site"), 
                               ToRescale=c("z",  "B", "epsilon"))
 
 # post-process chains for sign-swapping
-chains2LV <- postProcess(chains2LV.r3, VarsToProcess=VarsToProcess, 
+chains2LV <- postProcess(chains2LV.sc2, VarsToProcess=VarsToProcess, 
                          VarToSign = VarsToProcess[1:2])
 
 # Calculate summaries
