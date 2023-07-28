@@ -683,9 +683,9 @@ ChainToDiag <- function(ch, name) {
 #  SDby: name of Standard deviations
 #  ToRotate: Variables to rotate (e.g. epsilons, gamma/z).
 # SDToRotate: Standatd devations to rotate
-# rotation.fn: Function in GPArotation to calcualte rotation. Defaults to Varimax
+# rotation.fn: Function in GPArotation to calcualte rotation, or svd. Defaults to svd.
 # scale: Should RotateBy be scaled by SDby before rotating? Defaults to FALSE
-rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotation.fn="Varimax", 
+rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotation.fn="svd", 
                       scale=FALSE) {
   require(GPArotation)
   # Function to rotate matrices & return full vector or a matrix (retmat)
@@ -702,32 +702,47 @@ rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotati
     res
   }
   # Function to rotate (diagonal) matrices & return the diagonal
-  RotateSD <- function(name, vec, rotmat) {
-    mat <- diag(vec[grep(paste0("^", name, "\\["), names(vec))])
-    rotated <- mat%*%rotmat
-    
-    vec[grep(paste0("^", name, "\\["), names(vec))] <- diag(rotated)
-    vec
-  }
+  # RotateSD <- function(name, vec, rotmat) {
+  #   mat <- diag(vec[grep(paste0("^", name, "\\["), names(vec))])
+  #   rotated <- mat%*%rotmat
+  #   
+  #   vec[grep(paste0("^", name, "\\["), names(vec))] <- diag(rotated)
+  #   vec
+  # }
   
+  getLVsd <- function(vec, name, RotateBy) {
+     LVmat <- ChainToMatrix(vec, RotateBy)
+     vec[grep(paste0("^", name, "\\["), names(vec))] <- attr(scale(LVmat),"scaled:scale")
+     return(vec)
+  }
+
   #Extract standard deviartions and latent variables
   SDs <- ch[grep(SDby, names(ch))]
   LVmat <- ChainToMatrix(ch, RotateBy)
   if(scale) LVmat <- sweep(LVmat, 2, SDs, "*")
   
   # Get rotation
+  if(rotation.fn!="svd"){
   loadings.r  <- do.call(rotation.fn, list(A=LVmat)) # rotate
-  
+  }else{
+  loadings.r <- list(Th=svd(LVmat)$v)
+  }
   # Rotate variables
   for(nm in unique(c(RotateBy, ToRotate))) {
-    ch <- RotateVar(vec=ch, name=nm, rotmat=t(loadings.r$Th), retmat = FALSE)
+    ch <- RotateVar(vec=ch, name=nm, rotmat=loadings.r$Th, retmat = FALSE)
   }
-  for(nm in unique(c(SDby, SDToRotate))) {
-    ch <- RotateSD(vec=ch, name=nm, rotmat=t(loadings.r$Th))
-  }
+  # SDs are not rotated, but are now retrieved from either z or gamma (whichever we rotated by)
+  # Rotation of epsilon and varepsilon doesn't affect their SDs anyway
+  # Scaling does
+  # for(nm in unique(c(SDby, SDToRotate))) {
+  #   ch <- RotateSD(vec=ch, name=nm, rotmat=loadings.r$Th)
+  # }
+  ch <- getLVsd(vec=ch, name = "sd.LV", RotateBy = RotateBy)
+  
+  # I assume Z and Gamma have already been standardized previous to this function, so I leave those as they are.
+  # Only thing remains is to return the chain
   ch
 }
-
 
 RotateChains <- function(mcmc.lst, RotateBy="z", SDby = "sd.LV", 
                          ToRotate=c("B", "epsilon", "gamma", "O", "varepsilon"), 
@@ -783,23 +798,22 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
                        Nburn=1e3, NIter=3e3, Nthin=1, # for a full run
                        consts = consts)
 
-# Re-scale LVs etc.
+# Re-scale gamma so that its scale is absorbed by LVsd
 chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy="gamma", 
                               SDTorescale=c("sd.LV", "sd.Species"), 
                               ToRescale=c("gamma",  "O", "varepsilon"))
 
 
-# Varimax rotation
-# scale = TRUE so that Z*Sigma gets rotated. Otherwise just Z.
-chains2LV.r <- RotateChains(chains2LV.sc, rotation.fn="Varimax", scale = T)
-
-# Now scale LVs
-chains2LV.sc2 <- RescaleChains(chains2LV.r, ScaleBy="z", 
+# Re-scale Z so that its scale is absorbed by LVsd
+chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy="z", 
                               SDTorescale=c("sd.LV", "sd.Site"), 
                               ToRescale=c("z",  "B", "epsilon"))
 
+# Now rotate based on Z*Sigma and return its scale as LVsd.
+chains2LV.r <- RotateChains(chains2LV.sc2, rotation.fn="svd", scale = T)
+
 # post-process chains for sign-swapping
-chains2LV <- postProcess(chains2LV.sc2, VarsToProcess=VarsToProcess, 
+chains2LV <- postProcess(chains2LV.r, VarsToProcess=VarsToProcess, 
                          VarToSign = VarsToProcess[1:2])
 
 # Calculate summaries
