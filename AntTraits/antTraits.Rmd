@@ -112,37 +112,19 @@ OneLV.nim <- nimbleCode({
     }
 # Site scores: regression against environmental effects
 #    the Bs are the coefficients of the environmental effects
-      epsilonSTAR[i] ~ dnorm(0, sd = sd.Site) # Residual site effect
-      XB[i] <- inprod(X[i, 1:NEnv],BSTAR[1:NEnv])
-      zSTAR[i] <- XB[i] + epsilonSTAR[i]
+      epsilon[i] ~ dnorm(0, sd = sd.Site) # Residual site effect
+      XB[i] <- inprod(X[i, 1:NEnv],B[1:NEnv])
+      z[i] <- XB[i] + epsilon[i]
   }
   
   for(j in 1:NSpecies) {
 # Species effects: regression against trait effects
 #    The Os are the trait effects.
-      varepsilonSTAR[j] ~ dnorm(0, sd = sd.Species) # Residual
-      omegaTR[j] <- inprod(TR[j, 1:NTraits],OSTAR[1:NTraits])
-      gammaSTAR[j] <- omegaTR[j] + varepsilonSTAR[j]
+      varepsilon[j] ~ dnorm(0, sd = sd.Species) # Residual
+      omegaTR[j] <- inprod(TR[j, 1:NTraits],O[1:NTraits])
+      gamma[j] <- omegaTR[j] + varepsilon[j]
       beta0[j] ~ dnorm(0, sd = 1) # Species means
   }
-  
-# Here we standardise z and gamma, so the both have a variance of 1.
-#   The standard deviation of the latent variable is sd.LV.
-    zmu <- mean(zSTAR[1:NSites])
-    gammamu<- mean(gammaSTAR[1:NSpecies])
-    StdDev.z <- sqrt(mean((zSTAR[1:NSites] - zmu)^2))
-    StdDev.gamma <- sqrt(mean((gammaSTAR[1:NSpecies] - gammamu)^2)) 
-    z[1:NSites] <- (zSTAR[1:NSites]-zmu)/StdDev.z
-    gamma[1:NSpecies] <- (gammaSTAR[1:NSpecies]-gammamu)/StdDev.gamma
-    
-# Scale other parameters
-    epsmu <- mean(epsilonSTAR[1:NSites])
-    varepsmu <- mean(varepsilonSTAR[1:NSpecies])
-    
-    epsilon[1:NSites] <- (epsilonSTAR[1:NSites]-epsmu)/StdDev.z
-    B[1:NEnv] <-  BSTAR[1:NEnv]/StdDev.z
-    varepsilon[1:NSpecies] <- (varepsilonSTAR[1:NSpecies]-varepsmu)/StdDev.gamma
-    O[1:NTraits] <-  OSTAR[1:NTraits]/StdDev.gamma
 
     # priors for scales
     sd.Site ~ dexp(1)
@@ -150,10 +132,10 @@ OneLV.nim <- nimbleCode({
     sd.LV ~ dexp(1)
 
     for(k in 1:NEnv){
-      BSTAR[k] ~ dnorm(0, sd = 1)  
+      B[k] ~ dnorm(0, sd = 1)  
     }
     for(tr in 1:NTraits){
-      OSTAR[tr] ~ dnorm(0, sd = 1)
+      O[tr] ~ dnorm(0, sd = 1)
     }
 })
 ```
@@ -165,15 +147,15 @@ OneLV.nim <- nimbleCode({
 ```{r init}
 
 inits<-function(consts){
-  BSTAR = rnorm(consts$NEnv)
-  OSTAR = rnorm(consts$NTraits)
-  varepsilonSTAR = rnorm(consts$NSpecies)
-  epsilonSTAR = rnorm(consts$NSites)
+  B = rnorm(consts$NEnv)
+  O = rnorm(consts$NTraits)
+  varepsilon = rnorm(consts$NSpecies)
+  epsilon = rnorm(consts$NSites)
   list(
-    BSTAR = BSTAR,
-    OSTAR = OSTAR,
-    epsilonSTAR = epsilonSTAR,
-    varepsilonSTAR = varepsilonSTAR,
+    B = B,
+    O = O,
+    epsilon = epsilon,
+    varepsilon = varepsilon,
     sd.Site = rexp(1),
     sd.Species = rexp(1),
     beta0 = rnorm(consts$NSpecies),
@@ -187,23 +169,21 @@ inits<-function(consts){
 <details><summary>Functions for MCMC are here.</summary>
 
 ```{r mcmc_code}
-
-
 # Function to run one chain: it can be done with HMC or other MCMC algorithms.
 RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL, 
                         Nburn=5e3, NIter=5.5e4, Nthin=10, HMC = FALSE, ...) {
   require(nimble)
   require(nimbleHMC)
-  AllSamplers <-c('epsilonSTAR', 'varepsilonSTAR', 'beta0', 'OSTAR', 'BSTAR',
+  AllSamplers <-c('epsilon', 'varepsilon', 'beta0', 'O', 'B',
                   'sd.Site', 'sd.Species', 'sd.LV')
-  HMCsamplers <-c('epsilonSTAR', 'varepsilonSTAR','BSTAR', 'OSTAR', 'beta0', 
+  HMCsamplers <-c('epsilon', 'varepsilon','B', 'O', 'beta0', 
                   'sd.Site', 'sd.Species', 'LV', 'sd.LV')
   
   if(is.null(ToMonitor)) {
     ToMonitor <- c("beta0", "sd.Species", "sd.Site", "sd.LV", "B", "O", 
                    "epsilon", "varepsilon", "gamma", "z")
   }
-#  Mons <- c("beta0","sd.Species","sd.Site","sd.LV","B","OSTAR", "epsilonSTAR","varepsilonSTAR")
+#  Mons <- c("beta0","sd.Species","sd.Site","sd.LV","B","O", "epsilon","varepsilon")
   mod <- nimbleModel(code = code, name = "HO", constants = consts, 
                      inits = inits(consts), data = dat, buildDerivs = TRUE)
   model <- compileNimble(mod)
@@ -231,12 +211,13 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   return(res)
 }
 
+
 # Function to run parallel chains
-ParaNimble <- function(NChains, FUN, ...) {
+ParaNimble <- function(NChains, ...) {
   require(parallel)
   nimble_cluster <- makeCluster(4)
   
-  samples <- parLapply(cl = nimble_cluster, X = 1:4, fun = FUN, ...)
+  samples <- parLapply(cl = nimble_cluster, X = 1:4, ...)
   stopCluster(nimble_cluster)
 
   # Name the chains in the list
@@ -337,7 +318,7 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
 Finally, we can run the MCMC.
 
 ```{r MCMCrun, message=FALSE}
-chains.unsgn <- ParaNimble(4, FUN = RunOneChain,
+chains.unsgn <- ParaNimble(4, fun = RunOneChain,
                        dat = dat,
                        code = OneLV.nim,
                        inits = inits, HMC = TRUE,
@@ -449,17 +430,17 @@ HO.nim <- nimbleCode({
       Y[i, j] ~ dpois(lambda[i, j])
     }      
     for (l in 1:nLVs) {
-      XB[i, l] <- sum(X[i, 1:NEnv]*BSTAR[1:NEnv, l])
-      epsilonSTAR[i,l] ~ dnorm(0,sd.Site[l])# Residual
-      zSTAR[i,l] <- XB[i,l] + epsilonSTAR[i,l]
+      XB[i, l] <- sum(X[i, 1:NEnv]*B[1:NEnv, l])
+      epsilon[i,l] ~ dnorm(0,sd.Site[l])# Residual
+      z[i,l] <- XB[i,l] + epsilon[i,l]
     }
   }
   
   for(j in 1:NSpecies) {
     for (l in 1:nLVs) {
-      omegaTR[j, l] <- sum(TR[j, 1:NTraits]*OSTAR[1:NTraits, l])
-      varepsilonSTAR[j,l] ~ dnorm(0,sd.Species[l]) # Residual
-      gammaSTAR[j,l] <- omegaTR[j,l] + varepsilonSTAR[j,l]
+      omegaTR[j, l] <- sum(TR[j, 1:NTraits]*O[1:NTraits, l])
+      varepsilon[j,l] ~ dnorm(0,sd.Species[l]) # Residual
+      gamma[j,l] <- omegaTR[j,l] + varepsilon[j,l]
     }
     
     beta0[j] ~ dnorm(0, sd=1)
@@ -468,33 +449,15 @@ HO.nim <- nimbleCode({
   # stole some code from Boral for this - thanks Francis
   for(l in 1:(nLVs-1)) { 
     for(ll in (l+1):(nLVs)) {
-      BSTAR[l,ll] <- 0 
+      B[l,ll] <- 0 
     } 
   }
 
     
   for(l in 1:nLVs) { 
     # diagonal elements
-    BSTAR[l,l] ~ dnorm(0,sd=1)
+    B[l,l] ~ dnorm(0,sd=1)
 
-    ## standardizing z and gamma
-    zmu[l] <- mean(zSTAR[1:NSites,l])
-    StdDev.z[l] <- sqrt(mean((zSTAR[1:NSites,l] - zmu[l])^2))
-    z[1:NSites,l] <- (zSTAR[1:NSites,l]-zmu[l])/StdDev.z[l]
-    
-    gammamu[l] <- mean(gammaSTAR[1:NSpecies,l])
-    StdDev.gamma[l] <- sqrt(mean((gammaSTAR[1:NSpecies,l] - gammamu[l])^2)) 
-    gamma[1:NSpecies,l] <- (gammaSTAR[1:NSpecies,l]-gammamu[l])/StdDev.gamma[l]
-    
-  # Scale other parameters
-    epsmu[l] <- mean(epsilonSTAR[1:NSites,l])
-    varepsmu[l] <- mean(varepsilonSTAR[1:NSpecies,l])
-    
-    epsilon[1:NSites,l] <- (epsilonSTAR[1:NSites,l]-epsmu[l])/StdDev.z[l]
-    B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
-    varepsilon[1:NSpecies,l] <- (varepsilonSTAR[1:NSpecies,l]-varepsmu[l])/StdDev.gamma[l]
-    O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
-  
     # priors for scales
     sd.Site[l] ~ dexp(1)
     sd.Species[l] ~ dexp(1)
@@ -504,20 +467,20 @@ HO.nim <- nimbleCode({
   ## Free lower diagonals
   for(l in 2:nLVs) { 
     for(ll in 1:(l-1)) { 
-      BSTAR[l,ll] ~ dnorm(0,sd=1)
+      B[l,ll] ~ dnorm(0,sd=1)
       } 
   }
   ## All other elements
   for(l in (nLVs+1):NEnv) { 
     for(ll in 1:(nLVs)) { 
-      BSTAR[l,ll] ~dnorm(0,1) 
+      B[l,ll] ~dnorm(0,1) 
     } 
   }
 
   # Prior for trait effects
     for(tr in 1:NTraits){
     for(l in 1:nLVs){
-      OSTAR[tr,l] ~dnorm(0,1)
+      O[tr,l] ~dnorm(0,1)
     }
   }
 })
@@ -529,16 +492,16 @@ HO.nim <- nimbleCode({
 
 ```{r init2}
 inits<-function(consts){
-  BSTAR = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
-  BSTAR[upper.tri(BSTAR)] = 0
-  OSTAR = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
-  varepsilonSTAR = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
-  epsilonSTAR = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
+  B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
+  B[upper.tri(B)] = 0
+  O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
+  varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
+  epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
   list(
-    BSTAR = BSTAR,
-    OSTAR = OSTAR,
-    epsilonSTAR = epsilonSTAR,
-    varepsilonSTAR = varepsilonSTAR,
+    B = B,
+    O = O,
+    epsilon = epsilon,
+    varepsilon = varepsilon,
     sd.Site = rexp(consts$nLVs),
     sd.Species = rexp(consts$nLVs),
     beta0 = rnorm(consts$NSpecies),
@@ -716,7 +679,7 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
                        inits = inits, HMC=TRUE,
 #                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
                        Nburn = 1e3, NIter = 4e3, Nthin = 1, # for a full run
-                       consts = consts)
+                       consts = consts)#, HMCsamplers = c("sd.LV", "sd.Site", "sd.Species")) # HMC on hypers
 
 # Re-scale gamma so that its scale is absorbed by LVsd
 chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
@@ -763,9 +726,7 @@ chainsPlot(chains2LV, var = c("O"), legend = F, traceplot=TRUE)
 </details>
 
 
-The traceplots look good. We can now calculate variance explained for the latent variables.
-
-- take 1/zvar and epsvar/zvar? But marginal var or not..
+<!-- The traceplots look good.  -->
 
 ```{r sum_stats}
 
@@ -773,7 +734,7 @@ Ratio <- chains2LV$chain1[,"sd.LV[1]"]/chains2LV$chain1[,"sd.LV[2]"]
 Ratio.u <- HO.2LV$chain1[,"sd.LV[1]"]/HO.2LV$chain1[,"sd.LV[2]"]
 
 SDs <- summ.HO2LV$statistics[grep("sd", rownames(summ.HO2LV$statistic)),]
-rownames(SDs) <- c(paste0("Latent Variable ", 1:2), 
+rownames(SDs) <- c(paste0("Latent Variable ", 1:2),
               paste0("Site ", 1:2),
               paste0("Species ", 1:2))
 knitr::kable(SDs, digits=2, format = "html", table.attr = "style='width:70%;'")
