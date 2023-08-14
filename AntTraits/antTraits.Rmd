@@ -12,11 +12,11 @@ knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
 
 This document describes fitting a hierarchical ordination to data, including code and the details that are needed.
 
-The data is included in the \texttt{mvabund} \texttt{R}-package, but was originally collected by [Gibb *et al.*](https://link.springer.com/article/10.1007/s00442-014-3101-9). It is includes abundance observations of 41 ant species at 30 sites in Australia, along with 7 environmental variables and 5 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. The methodological question is how does hierarchical ordination help.
+The data is included in the *mvabund* *R*-package, but was originally collected by [Gibb *et al.*](https://link.springer.com/article/10.1007/s00442-014-3101-9). It is includes abundance observations of 41 ant species at 30 sites in Australia, along with 7 environmental variables and 5 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. The methodological question is how does hierarchical ordination help.
 
 The abundances, traits and environment are each stored in a different matrix. First we load the data and set some constants:
 
-```{r data, cache=TRUE, message=FALSE}
+```{r data, cache=FALSE, message=FALSE}
 library(nimble)
 library(nimbleHMC)
 library(mvabund)
@@ -25,8 +25,11 @@ library(coda)
 data("antTraits")
 Y <- antTraits$abund # abundance data of sites by species
 X <- scale(antTraits$env) # environmental variables of sites by predictors
+qrX <- qr(X)
+X <- X[,qrX$pivot[1:qrX$rank]]
 TR <- scale(model.matrix(~0+.,antTraits$traits)) # species traits
-
+qrTR <- qr(TR)
+TR <- TR[,qrTR$pivot[1:qrTR$rank]]
 NSites <- nrow(Y) # number of sites
 NSpecies <- ncol(Y) # number of species
 NTraits <- ncol(TR) # number of traits
@@ -35,9 +38,8 @@ NEnv <- ncol(X) # number of environmental predictors
 # create data lists for Nimble
 dat <- list(Y = Y, X = X, TR = TR)
 consts <- list(NSites = NSites, NEnv = NEnv, NTraits = NTraits, NSpecies = NSpecies)
-
+rm(NEnv, NTraits, NSpecies, NSites)
 ```
-
 
 ## The Model
 
@@ -93,7 +95,7 @@ Note that the predictors are all standardized to zero mean and unit variance. We
 
 # Implementation 
 
-We fit the model with the \texttt{Nimble} \texttt{R}-package. We start with a single dimension for simplicity, so that we can show the steps needed.
+We fit the model with the *Nimble* *R*-package. We start with a single dimension for simplicity, so that we can show the steps needed.
 
 ### One dimensional ordination
 
@@ -112,19 +114,37 @@ OneLV.nim <- nimbleCode({
     }
 # Site scores: regression against environmental effects
 #    the Bs are the coefficients of the environmental effects
-      epsilon[i] ~ dnorm(0, sd = sd.Site) # Residual site effect
-      XB[i] <- inprod(X[i, 1:NEnv],B[1:NEnv])
-      z[i] <- XB[i] + epsilon[i]
+      epsilonSTAR[i] ~ dnorm(0, sd = sd.Site) # Residual site effect
+      XB[i] <- inprod(X[i, 1:NEnv],BSTAR[1:NEnv])
+      zSTAR[i] <- XB[i] + epsilonSTAR[i]
   }
   
   for(j in 1:NSpecies) {
 # Species effects: regression against trait effects
 #    The Os are the trait effects.
-      varepsilon[j] ~ dnorm(0, sd = sd.Species) # Residual
-      omegaTR[j] <- inprod(TR[j, 1:NTraits],O[1:NTraits])
-      gamma[j] <- omegaTR[j] + varepsilon[j]
+      varepsilonSTAR[j] ~ dnorm(0, sd = sd.Species) # Residual
+      omegaTR[j] <- inprod(TR[j, 1:NTraits],OSTAR[1:NTraits])
+      gammaSTAR[j] <- omegaTR[j] + varepsilonSTAR[j]
       beta0[j] ~ dnorm(0, sd = 1) # Species means
   }
+  
+# Here we standardise z and gamma, so the both have a variance of 1.
+#   The standard deviation of the latent variable is sd.LV.
+    zmu <- mean(zSTAR[1:NSites])
+    gammamu<- mean(gammaSTAR[1:NSpecies])
+    StdDev.z <- sqrt(mean((zSTAR[1:NSites] - zmu)^2))
+    StdDev.gamma <- sqrt(mean((gammaSTAR[1:NSpecies] - gammamu)^2)) 
+    z[1:NSites] <- (zSTAR[1:NSites]-zmu)/StdDev.z
+    gamma[1:NSpecies] <- (gammaSTAR[1:NSpecies]-gammamu)/StdDev.gamma
+    
+# Scale other parameters
+    epsmu <- mean(epsilonSTAR[1:NSites])
+    varepsmu <- mean(varepsilonSTAR[1:NSpecies])
+    
+    epsilon[1:NSites] <- (epsilonSTAR[1:NSites]-epsmu)/StdDev.z
+    B[1:NEnv] <-  BSTAR[1:NEnv]/StdDev.z
+    varepsilon[1:NSpecies] <- (varepsilonSTAR[1:NSpecies]-varepsmu)/StdDev.gamma
+    O[1:NTraits] <-  OSTAR[1:NTraits]/StdDev.gamma
 
     # priors for scales
     sd.Site ~ dexp(1)
@@ -132,10 +152,10 @@ OneLV.nim <- nimbleCode({
     sd.LV ~ dexp(1)
 
     for(k in 1:NEnv){
-      B[k] ~ dnorm(0, sd = 1)  
+      BSTAR[k] ~ dnorm(0, sd = 1)  
     }
     for(tr in 1:NTraits){
-      O[tr] ~ dnorm(0, sd = 1)
+      OSTAR[tr] ~ dnorm(0, sd = 1)
     }
 })
 ```
@@ -145,17 +165,16 @@ OneLV.nim <- nimbleCode({
 </summary>
 
 ```{r init}
-
-inits<-function(consts){
+inits <- function(consts){
   B = rnorm(consts$NEnv)
   O = rnorm(consts$NTraits)
   varepsilon = rnorm(consts$NSpecies)
   epsilon = rnorm(consts$NSites)
   list(
-    B = B,
-    O = O,
-    epsilon = epsilon,
-    varepsilon = varepsilon,
+    BSTAR = B,
+    OSTAR = O,
+    epsilonSTAR = epsilon,
+    varepsilonSTAR = varepsilon,
     sd.Site = rexp(1),
     sd.Species = rexp(1),
     beta0 = rnorm(consts$NSpecies),
@@ -170,39 +189,45 @@ inits<-function(consts){
 
 ```{r mcmc_code}
 # Function to run one chain: it can be done with HMC or other MCMC algorithms.
+# "block" can be used to specify blocking structures for the slice sampler
+# parameters that are not in "block" are HMCed
 RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL, 
-                        Nburn=5e3, NIter=5.5e4, Nthin=10, HMC = FALSE, ...) {
+                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, otherSamp = NULL, ...) {
   require(nimble)
   require(nimbleHMC)
-  AllSamplers <-c('epsilon', 'varepsilon', 'beta0', 'O', 'B',
+  AllSamplers <- HMCsamplers <- c('epsilonSTAR', 'varepsilonSTAR', 'beta0', 'OSTAR', 'BSTAR',
                   'sd.Site', 'sd.Species', 'sd.LV')
-  HMCsamplers <-c('epsilon', 'varepsilon','B', 'O', 'beta0', 
-                  'sd.Site', 'sd.Species', 'LV', 'sd.LV')
   
+  if(!is.null(block)){
+  HMCsamplers <- HMCsamplers[!HMCsamplers%in%unique(gsub("\\s*\\[[^\\)]+\\]","",unlist(block)))]
+  }
   if(is.null(ToMonitor)) {
     ToMonitor <- c("beta0", "sd.Species", "sd.Site", "sd.LV", "B", "O", 
                    "epsilon", "varepsilon", "gamma", "z")
   }
-#  Mons <- c("beta0","sd.Species","sd.Site","sd.LV","B","O", "epsilon","varepsilon")
   mod <- nimbleModel(code = code, name = "HO", constants = consts, 
                      inits = inits(consts), data = dat, buildDerivs = TRUE)
   model <- compileNimble(mod)
-  if(HMC) { # Do HMC on everything
-    conf <- configureHMC(model, monitors = ToMonitor, print = FALSE, 
-                         control=list(nwarmup=Nburn, kappa=0.95))
+  
+  # Do HMC
+    conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
+                         control=list(nwarmup=Nburn, kappa = 0.95, maxTreeDepth = 30))
+    if(!isFALSE(block)) { 
+    if(is.list(block)){
     # Use a slice everything that not being HMCed
-    Slicesamplers <-AllSamplers[!AllSamplers%in%HMCsamplers] 
-    if(length(Slicesamplers)>1) {
-      conf$removeSamplers(Slicesamplers)
-      sapply(Slicesamplers, conf$addSampler, type = "AF_slice")
+      lapply(block, conf$addSampler, type = "AF_slice")
+    }else{
+      # Use a slice everything that not being HMCed
+      sapply(block, conf$addSampler, type = "AF_slice")
     }
-  } else {
-    conf <- configureMCMC(model, monitors = ToMonitor, print = FALSE)
-    # Change the samplers to block update, using a nifty extension of the slice sampler
-    Slicesamplers <-c('epsilon', 'varepsilon')
-    conf$removeSamplers(Slicesamplers)
-    conf$addSampler(target = Slicesamplers, type = "AF_slice")
-  }
+    }
+  # else {
+  #   conf <- configureMCMC(model, monitors = ToMonitor, print = FALSE)
+  #   # Change the samplers to block update, using a nifty extension of the slice sampler
+  #   Slicesamplers <-c('epsilon', 'varepsilon')
+  #   conf$removeSamplers(Slicesamplers)
+  #   conf$addSampler(target = Slicesamplers, type = "AF_slice")
+  # }
 #  nimbleOptions(MCMCusePredictiveDependenciesInCalculations = FALSE)
   mcmc <- buildMCMC(conf)
   cmcmc <- compileNimble(mcmc, project = model)
@@ -211,13 +236,19 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   return(res)
 }
 
-
 # Function to run parallel chains
 ParaNimble <- function(NChains, ...) {
+  opts <- list(...)
+  if(!is.null(opts$seeds) && (length(opts$seeds) == NChains)){
+    seeds <- opts$seeds
+    opts <- opts[-which(names(opts)=="seeds")]
+  }else{
+    seeds <- 1:NChains
+  }
   require(parallel)
-  nimble_cluster <- makeCluster(4)
+  nimble_cluster <- makeCluster(NChains)
   
-  samples <- parLapply(cl = nimble_cluster, X = 1:4, ...)
+  samples <- parLapply(cl = nimble_cluster, X = seeds, ...)
   stopCluster(nimble_cluster)
 
   # Name the chains in the list
@@ -225,6 +256,41 @@ ParaNimble <- function(NChains, ...) {
   chains
 }
 
+# Function to create list of names for parameters to use a block slice sampler for
+
+MakeBlockList <- function(consts, LVwise = TRUE){
+# builds list for slice AF sampling
+# with LVwise = TRUE we are LV-wise blocking B and epsilon, and O and varepsilon
+# otherwise, LVs are jointly blocked
+if(LVwise & consts$nLVs>1){
+blockList <- c(sapply(1:consts$nLVs,
+       function(x,consts){
+         c(paste0("BSTAR[", 1:consts$NEnv,", ",x, "]"),
+           paste0("epsilonSTAR[", 1:consts$NSites,", ",x, "]"))
+         }
+       ,
+         consts = consts,simplify=F),
+       sapply(1:consts$nLVs,
+       function(x,consts){
+         c(paste0("OSTAR[", 1:consts$NTraits,", ",x, "]"),
+           paste0("varepsilonSTAR[", 1:consts$NSpecies,", ",x, "]"))
+         }
+       ,
+         consts = consts,simplify=F)
+       )
+if(consts$nLVs>1){
+# remove entries of BSTAR that are fixed
+for(q in 2:consts$nLVs){
+  blockList[[q]] <- blockList[[q]][-(1:(q-1))]
+}
+}
+}else{
+  blockList = list(c("BSTAR","epsilonSTAR"),c("OSTAR","varepsilonSTAR"))
+}
+# don't forget the intercept
+blockList <- append(blockList, "beta0")
+blockList
+}
 ```
 
 </details>
@@ -316,21 +382,21 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
 </details>
 
 Finally, we can run the MCMC.
-
 ```{r MCMCrun, message=FALSE}
+consts$nLVs = 1
 chains.unsgn <- ParaNimble(4, fun = RunOneChain,
                        dat = dat,
                        code = OneLV.nim,
-                       inits = inits, HMC = TRUE,
+                       inits = inits, 
 #                       Nburn = 5e1, NIter = 5.5e2, Nthin = 1, # for a small run
                        Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
-                       consts = consts)
+                       consts = consts, block = MakeBlockList(consts)) # HMC on the rest (hypers)
 
 # post-process chains for sign-swapping
 VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
 VarsToSign <- c("^B")
 chains <- postProcess(chains.unsgn, VarsToProcess = VarsToProcess, 
-                      VarToSign = VarsToSign, print = TRUE)
+                      VarToSign = VarsToSign, print = TRUE, VarsToSwapBy = "B[2]")
 summ.HO = summary(chains)
 ```
 
@@ -422,6 +488,8 @@ To prevent rotational invariance, we require $\boldsymbol{B}$ to have zeros abov
 
 ```{r model2_code}
 # Model code
+# Update our constants from before with the new number of LVs, rest remains the same
+# Model code
 HO.nim <- nimbleCode({
   for (i in 1:NSites) {
     for (j in 1:NSpecies) {
@@ -430,17 +498,17 @@ HO.nim <- nimbleCode({
       Y[i, j] ~ dpois(lambda[i, j])
     }      
     for (l in 1:nLVs) {
-      XB[i, l] <- sum(X[i, 1:NEnv]*B[1:NEnv, l])
-      epsilon[i,l] ~ dnorm(0,sd.Site[l])# Residual
-      z[i,l] <- XB[i,l] + epsilon[i,l]
+      XB[i, l] <- sum(X[i, 1:NEnv]*BSTAR[1:NEnv, l])
+      epsilonSTAR[i,l] ~ dnorm(0,sd.Site[l])#Residual
+      zSTAR[i,l] <- XB[i,l] + epsilonSTAR[i,l]
     }
   }
   
   for(j in 1:NSpecies) {
     for (l in 1:nLVs) {
-      omegaTR[j, l] <- sum(TR[j, 1:NTraits]*O[1:NTraits, l])
-      varepsilon[j,l] ~ dnorm(0,sd.Species[l]) # Residual
-      gamma[j,l] <- omegaTR[j,l] + varepsilon[j,l]
+      omegaTR[j, l] <- sum(TR[j, 1:NTraits]*OSTAR[1:NTraits, l])
+      varepsilonSTAR[j,l] ~ dnorm(0,sd.Species[l]) # Residual
+      gammaSTAR[j,l] <- omegaTR[j,l] + varepsilonSTAR[j,l]
     }
     
     beta0[j] ~ dnorm(0, sd=1)
@@ -449,15 +517,33 @@ HO.nim <- nimbleCode({
   # stole some code from Boral for this - thanks Francis
   for(l in 1:(nLVs-1)) { 
     for(ll in (l+1):(nLVs)) {
-      B[l,ll] <- 0 
+      BSTAR[l,ll] <- 0 
     } 
   }
 
     
   for(l in 1:nLVs) { 
     # diagonal elements
-    B[l,l] ~ dnorm(0,sd=1)
+    BSTAR[l,l] ~ dnorm(0,sd=1)
 
+    ## standardizing z and gamma
+    zmu[l] <- mean(zSTAR[1:NSites,l])
+    StdDev.z[l] <- sqrt(mean((zSTAR[1:NSites,l] - zmu[l])^2))
+    z[1:NSites,l] <- (zSTAR[1:NSites,l]-zmu[l])/StdDev.z[l]
+    
+    gammamu[l] <- mean(gammaSTAR[1:NSpecies,l])
+    StdDev.gamma[l] <- sqrt(mean((gammaSTAR[1:NSpecies,l] - gammamu[l])^2)) 
+    gamma[1:NSpecies,l] <- (gammaSTAR[1:NSpecies,l]-gammamu[l])/StdDev.gamma[l]
+    
+  # Scale other parameters
+    epsmu[l] <- mean(epsilonSTAR[1:NSites,l])
+    varepsmu[l] <- mean(varepsilonSTAR[1:NSpecies,l])
+    
+    epsilon[1:NSites,l] <- (epsilonSTAR[1:NSites,l]-epsmu[l])/StdDev.z[l]
+    B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
+    varepsilon[1:NSpecies,l] <- (varepsilonSTAR[1:NSpecies,l]-varepsmu[l])/StdDev.gamma[l]
+    O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
+  
     # priors for scales
     sd.Site[l] ~ dexp(1)
     sd.Species[l] ~ dexp(1)
@@ -467,20 +553,19 @@ HO.nim <- nimbleCode({
   ## Free lower diagonals
   for(l in 2:nLVs) { 
     for(ll in 1:(l-1)) { 
-      B[l,ll] ~ dnorm(0,sd=1)
+      BSTAR[l,ll] ~ dnorm(0,sd=1)
       } 
-  }
-  ## All other elements
+    }
   for(l in (nLVs+1):NEnv) { 
     for(ll in 1:(nLVs)) { 
-      B[l,ll] ~dnorm(0,1) 
+      BSTAR[l,ll] ~dnorm(0,1) 
     } 
-  }
+  } ## All other elements
 
   # Prior for trait effects
     for(tr in 1:NTraits){
     for(l in 1:nLVs){
-      O[tr,l] ~dnorm(0,1)
+      OSTAR[tr,l] ~dnorm(0,1)
     }
   }
 })
@@ -491,22 +576,42 @@ HO.nim <- nimbleCode({
 <details><summary>We create a new function to simulate starting values from the prior distributions, which we can hide away</summary>
 
 ```{r init2}
-inits<-function(consts){
-  B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
-  B[upper.tri(B)] = 0
-  O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
-  varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
-  epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
-  list(
-    B = B,
-    O = O,
-    epsilon = epsilon,
-    varepsilon = varepsilon,
-    sd.Site = rexp(consts$nLVs),
-    sd.Species = rexp(consts$nLVs),
-    beta0 = rnorm(consts$NSpecies),
-    sd.LV = rexp(consts$nLVs)
-  )
+# inits <- function(consts, dat, seed){
+#   start.fit <- gllvm::gllvm(dat$Y, X=dat$X, num.lv.c = consts$nLVs, family = "poisson", seed = seed, sd.errors = FALSE)
+#   qrB <- qr(t(start.fit$params$LvXcoef)) # Rotate to B[1,2]=0
+#   B = t(qr.R(qr(t(start.fit$params$LvXcoef))))
+#   start.fit$params$theta <- start.fit$params$theta%*%qr.Q(qrB)
+#   mod.TR <- lm(start.fit$params$theta~0+dat$TR)
+#   O = coef(mod.TR)
+#   varepsilon = residuals(mod.TR)
+#   epsilon = start.fit$lvs%*%qr.Q(qrB)
+#   list(
+#     BSTAR = B,
+#     OSTAR = O,
+#     epsilonSTAR = epsilon,
+#     varepsilonSTAR = varepsilon,
+#     sd.Site = start.fit$params$sigma.lv,
+#     sd.Species = rexp(consts$nLVs),
+#     beta0 = rnorm(consts$NSpecies),
+#     sd.LV = rexp(consts$nLVs)
+#   )
+# }
+inits <- function(consts){
+    B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
+    B[upper.tri(B)] = 0
+    O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
+    varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
+    epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
+    list(
+        B = B,
+        O = O,
+        epsilon = epsilon,
+        varepsilon = varepsilon,
+        sd.Site = rexp(consts$nLVs),
+        sd.Species = rexp(consts$nLVs),
+        beta0 = rnorm(consts$NSpecies),
+        sd.LV = rexp(consts$nLVs)
+    )
 }
 ```
 </details>
@@ -524,7 +629,7 @@ But we can rotate by a rotation matrix $M$ this to get an equivalent model:
 $$
 \eta_{ij} = \beta_{0j} + \boldsymbol{z}_j^\top \boldsymbol{M} \boldsymbol{\Sigma} \boldsymbol{M}^\top\boldsymbol{\gamma}_i.
 $$
-There are many possible rotations (see the [https://cran.r-project.org/web/packages/GPArotation/index.html](GPArotation) package for a long list). Here we will just rotate abased on a singular value decomposition (SVD) of the latent variables, as in the \texttt{gllvm} \texttt{R}-package [Niku *et al.*](https://cran.r-project.org/web/packages/gllvm/index.html). This rotates the ordination so that most of the variation in $\boldsymbol{z}_i^\top \boldsymbol{\Sigma}$ is put on the first latent variable, and so that the second latent variable has the next largest amount of variance. Note, that this does not guarantee that these are the latent variables that explain most variation in the response, unlike in eigenanalysis.
+There are many possible rotations (see the [https://cran.r-project.org/web/packages/GPArotation/index.html](GPArotation) package for a long list). Here we will just rotate abased on a singular value decomposition (SVD) of the latent variables, as in the *gllvm* *R*-package [Niku *et al.*](https://cran.r-project.org/web/packages/gllvm/index.html). This rotates the ordination so that most of the variation in $\boldsymbol{z}_i^\top \boldsymbol{\Sigma}$ is put on the first latent variable, and so that the second latent variable has the next largest amount of variance. Note, that this does not guarantee that these are the latent variables that explain most variation in the response, unlike in eigenanalysis.
 
 In detail, for each draw from the posterior we:
 
@@ -607,15 +712,14 @@ rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotati
   # Retrieve correct scale of LVs
   if(scale){
     #also need to put LVs into here
-    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(LVmat)
-     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(LVmat),"scaled:scale")
+    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(loadings.r$loadings)
+    ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")
   } else{
    # if LVs are not scaled by LV sds, we just add the new LV scale to LVs SDs.
-     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- attr(scale(LVmat),"scaled:scale")
-     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(LVmat),"scaled:scale")*SDs
+     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- scale(loadings.r$loadings)
+     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")*SDs
   }
-  
-    
+
   # Rotate rest of the variables
   for(nm in unique(ToRotate)) {
     ch <- RotateVar(vec=ch, name=nm, rotmat=loadings.r$Th, retmat = FALSE)
@@ -664,7 +768,6 @@ RescaleChains <- function(mcmc.lst, ...) {
   })
   as.mcmc.list(rescale)
 }
-
 ```
 
 </details>
@@ -676,10 +779,10 @@ consts$nLVs <- nLVs <- 2
 HO.2LV <- ParaNimble(4, fun = RunOneChain,
                        dat = dat,
                        code = HO.nim,
-                       inits = inits, HMC=TRUE,
+                       inits = inits, block = MakeBlockList(consts),
 #                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
-                       Nburn = 1e3, NIter = 4e3, Nthin = 1, # for a full run
-                       consts = consts)#, HMCsamplers = c("sd.LV", "sd.Site", "sd.Species")) # HMC on hypers
+                       Nburn = 1000, NIter = 4e3, Nthin = 1, # for a full run
+                       consts = consts)
 
 # Re-scale gamma so that its scale is absorbed by LVsd
 chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
@@ -701,7 +804,7 @@ chains2LV <- postProcess(chains2LV.r, VarsToProcess = VarsToProcess, VarsToSwapB
 # Calculate summaries
 summ.HO2LV <- summary(chains2LV)
 
-rm(chains2LV.r, chains2LV.r2, chains2LV.r3)
+rm(chains2LV.sc, chains2LV.sc2, chains2LV.r)
 
 ```
 
@@ -713,7 +816,6 @@ Environment first:
 
 ```{r results2, fig.height=10}
 chainsPlot(chains2LV, var = c("B"), legend = F, traceplot=TRUE)
-
 ```
 
 And the trait effects:
@@ -729,7 +831,6 @@ chainsPlot(chains2LV, var = c("O"), legend = F, traceplot=TRUE)
 <!-- The traceplots look good.  -->
 
 ```{r sum_stats}
-
 Ratio <- chains2LV$chain1[,"sd.LV[1]"]/chains2LV$chain1[,"sd.LV[2]"]
 Ratio.u <- HO.2LV$chain1[,"sd.LV[1]"]/HO.2LV$chain1[,"sd.LV[2]"]
 
@@ -814,14 +915,13 @@ AddArrows(marg = par("usr"), coords=B.m, col="red")
 plot(gamma.m,type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Species")
 text(gamma.m,labels=vegan::make.cepnames(colnames(Y)))
 AddArrows(marg = par("usr"), coords=O.m, col="blue")
-
-
 ```
 
 We can see that almost all of the environmental effects seem to act in the same way, mainly on LV1.
 
 We can also look at some summary statistics for the scale parameters of the latent variables, species-specific residuals and site-specific residuals, respectively:
 
+\Large **INSERT INFO**
 
 These tell us how well the predictors explain the ordination; the species- and site-specific scale parameters would be zero if the predictors fully explained the ordination. The scale parameters for the latent variables are similar to singular values (the square root of eigenvalues) in a classical ordination; they reflect a dimension its importance to the response.
 
@@ -886,13 +986,13 @@ and
 
 ```{r residualcov}
 #species
-spec.mat <- matrix(0,nrow=NSpecies,ncol=NSpecies)
+spec.mat <- matrix(0,nrow=consts$NSpecies,ncol=consts$NSpecies)
 Sigma <- diag(SDs[grep("Latent Variable", rownames(SDs)),1]^2)
 Sigma.sp <- diag(SDs[grep("Species", rownames(SDs)),1]^2)
 Sigma.si <- diag(SDs[grep("Site", rownames(SDs)),1]^2)
 
-for(j in 1:NSpecies){
-  for(j2 in 1:NSpecies){
+for(j in 1:consts$NSpecies){
+  for(j2 in 1:consts$NSpecies){
     if(j==j2){
       spec.mat[j,j2] = X[1,,drop=F]%*%B.m%*%Sigma%*%Sigma.sp%*%t(B.m)%*%t(X[1,,drop=F])
     }
@@ -905,10 +1005,10 @@ colnames(spec.cor.mat) <- row.names(spec.cor.mat) <- colnames(Y)
 corrplot::corrplot(spec.cor.mat,type = "lower",order = "AOE", main = "Species", mar = c(1,1,1,1),tl.srt=45,tl.cex = .5)
 
 #sites
-site.mat <- matrix(0,nrow=NSites,ncol=NSites)
+site.mat <- matrix(0,nrow=consts$NSites,ncol=consts$NSites)
 
-for(i in 1:NSites){
-  for(i2 in 1:NSites){
+for(i in 1:consts$NSites){
+  for(i2 in 1:consts$NSites){
     if(i==i2){
       site.mat[i,i2] = TR[1,,drop=F]%*%O.m%*%Sigma%*%Sigma.si%*%t(O.m)%*%t(TR[1,,drop=F])
     }
@@ -917,6 +1017,6 @@ for(i in 1:NSites){
 }
 
 site.cor.mat <- cov2cor(site.mat)
-colnames(site.cor.mat) <- row.names(site.cor.mat) <- paste("Site", 1:NSites)
+colnames(site.cor.mat) <- row.names(site.cor.mat) <- paste("Site", 1:consts$NSites)
 corrplot::corrplot(site.cor.mat,type = "lower",order = "AOE", main = "Sites", mar = c(3,3,3,3),tl.srt=45,tl.cex = .5)
 ```
