@@ -821,19 +821,34 @@ chainsPlot(chains2LV, var = c("O"), legend = F, traceplot=TRUE)
 ```
 
 </details>
+What we are really interested in, is looking at the environment-trait interactions. We can plot those with the following code.
 
+```{r EnvTraitInt}
+# Function to get MCMC results for reduced-rank approximated interaction term
+getMCMCInt <- function(mcmc.lst, dat,...) {
+  int.mcmc <- lapply(mcmc.lst, function(mcmc){
+    inCoefs <- as.mcmc(t(apply(mcmc, 1, function(ch){
+    B <- ChainToMatrix(ch,"B")
+    O <- ChainToMatrix(ch,"O")  
+    SDs <- diag(ch[grep("sd.LV",gsub("\\s*\\[[^\\)]+\\]","",names(ch)))])
+    coefs <- B%*%SDs%*%t(O)
+    vec <- c(coefs)
+    names(vec) <- paste0(colnames(dat$X),":",rep(colnames(dat$TR),each=ncol(dat$X)))
+    vec
+    })))
+  }
+  )
+  as.mcmc.list(int.mcmc)
+}
 
-<!-- The traceplots look good.  -->
-
-```{r sum_stats}
-Ratio <- chains2LV$chain1[,"sd.LV[1]"]/chains2LV$chain1[,"sd.LV[2]"]
-Ratio.u <- HO.2LV$chain1[,"sd.LV[1]"]/HO.2LV$chain1[,"sd.LV[2]"]
-
-SDs <- summ.HO2LV$statistics[grep("sd", rownames(summ.HO2LV$statistic)),]
-rownames(SDs) <- c(paste0("Latent Variable ", 1:2),
-              paste0("Site ", 1:2),
-              paste0("Species ", 1:2))
-knitr::kable(SDs, digits=2, format = "html", table.attr = "style='width:70%;'")
+intChains <- getMCMCInt(chains2LV, dat = dat)
+summ.EnvTraitInt <- summary(intChains)
+coefs <- matrix(summ.EnvTraitInt$statistics[,1], ncol = ncol(dat$TR), nrow=ncol(dat$X), dimnames = list(colnames(dat$X),colnames(dat$TR)))
+a <- 0.2
+colort <- colorRampPalette(c("blue", "white", "red"))
+lattice::levelplot(coefs, xlab = "Environmental Variables", 
+                      ylab = "Species traits", col.regions = colort(100), cex.lab = 1.3, 
+                      at = seq(-a, a, length = 100), scales = list(x = list(rot = 45)))
 ```
 
 Now, we can make two-dimensional ordination plots of sites and species, with their predictor effects. Note that these have been rotated, so that most ofthe variance should be on the first axis.
@@ -853,6 +868,7 @@ AddArrows <- function(coords, marg= par("usr"), col=2) {
     y1 = ends[, 2] + origin[2],
     col = col,
     length = 0.1)
+
   text(
     x = origin[1] + ends[, 1] * 1.1,
     y = origin[2] + ends[, 2] * 1.1,
@@ -898,7 +914,9 @@ gamma.m <- GetMeans(summ.HO2LV, name="^gamma", d=consts$nLVs)
 vareps.m <- GetMeans(summ.HO2LV, name="^varepsilon", d=consts$nLVs)
 eps.m <- GetMeans(summ.HO2LV, name="^epsilon", d=consts$nLVs)
 B.m <- GetMeans(summ.HO2LV, name="B", d=consts$nLVs)
+row.names(B.m) <- colnames(dat$X)
 O.m <- GetMeans(summ.HO2LV, name="O", d=consts$nLVs)
+row.names(O.m) <- colnames(dat$TR)
 
 par(mfrow=c(2,1))
 #LVs
@@ -914,9 +932,20 @@ AddArrows(marg = par("usr"), coords=O.m, col="blue")
 
 We can see that almost all of the environmental effects seem to act in the same way, mainly on LV1.
 
-We can also look at some summary statistics for the scale parameters of the latent variables, species-specific residuals and site-specific residuals, respectively:
 
-\Large **INSERT INFO**
+```{r sum_stats}
+Ratio <- chains2LV$chain1[,"sd.LV[1]"]/chains2LV$chain1[,"sd.LV[2]"]
+Ratio.u <- HO.2LV$chain1[,"sd.LV[1]"]/HO.2LV$chain1[,"sd.LV[2]"]
+
+SDs <- summ.HO2LV$statistics[grep("sd", rownames(summ.HO2LV$statistic)),]
+rownames(SDs) <- c(paste0("Latent Variable ", 1:2),
+              paste0("Site ", 1:2),
+              paste0("Species ", 1:2))
+knitr::kable(SDs, digits=2, format = "html", table.attr = "style='width:70%;'")
+```
+
+
+\Large **INSERT VAREXPL INFO**
 
 These tell us how well the predictors explain the ordination; the species- and site-specific scale parameters would be zero if the predictors fully explained the ordination. The scale parameters for the latent variables are similar to singular values (the square root of eigenvalues) in a classical ordination; they reflect a dimension its importance to the response.
 
