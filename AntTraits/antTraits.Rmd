@@ -138,12 +138,9 @@ OneLV.nim <- nimbleCode({
     gamma[1:NSpecies] <- (gammaSTAR[1:NSpecies]-gammamu)/StdDev.gamma
     
 # Scale other parameters
-    epsmu <- mean(epsilonSTAR[1:NSites])
-    varepsmu <- mean(varepsilonSTAR[1:NSpecies])
-    
-    epsilon[1:NSites] <- (epsilonSTAR[1:NSites]-epsmu)/StdDev.z
+    epsilon[1:NSites] <- epsilonSTAR[1:NSites]/StdDev.z
     B[1:NEnv] <-  BSTAR[1:NEnv]/StdDev.z
-    varepsilon[1:NSpecies] <- (varepsilonSTAR[1:NSpecies]-varepsmu)/StdDev.gamma
+    varepsilon[1:NSpecies] <- varepsilonSTAR[1:NSpecies]/StdDev.gamma
     O[1:NTraits] <-  OSTAR[1:NTraits]/StdDev.gamma
 
     # priors for scales
@@ -412,14 +409,12 @@ First the environmental effects:
 ```{r results1, warning=FALSE, message=FALSE}
 library(basicMCMCplots)
 chainsPlot(chains, var = c("B"), legend = F,traceplot = T)
-
 ```
 
 Then the trait effects:
 
 ```{r ResO, warning=FALSE,message=FALSE, fig.height=10}
 chainsPlot(chains, var = c("O"), legend = F,traceplot = TRUE)
-
 ```
 
 </details>
