@@ -187,16 +187,17 @@ inits <- function(consts){
 ```{r mcmc_code}
 # Function to run one chain: it can be done with HMC or other MCMC algorithms.
 # "block" can be used to specify blocking structures for the slice sampler
-# parameters that are not in "block" are HMCed
+# "RW" can be used to specify parameters on which to apply univariate Metropolis-Hastings
+# parameters that are not in "block" or "RW" are HMCed
 RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL, 
-                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, otherSamp = NULL, ...) {
+                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, RW = NULL, ...) {
   require(nimble)
   require(nimbleHMC)
   AllSamplers <- HMCsamplers <- c('epsilonSTAR', 'varepsilonSTAR', 'beta0', 'OSTAR', 'BSTAR',
                   'sd.Site', 'sd.Species', 'sd.LV')
   
   if(!is.null(block)){
-  HMCsamplers <- HMCsamplers[!HMCsamplers%in%unique(gsub("\\s*\\[[^\\)]+\\]","",unlist(block)))]
+  HMCsamplers <- HMCsamplers[!HMCsamplers%in%unique(gsub("\\s*\\[[^\\)]+\\]","",c(unlist(block),unlist(RW))))]
   }
   if(is.null(ToMonitor)) {
     ToMonitor <- c("beta0", "sd.Species", "sd.Site", "sd.LV", "B", "O", 
@@ -209,7 +210,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   # Do HMC
     conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
                          control=list(nwarmup=Nburn, kappa = 0.95, maxTreeDepth = 30))
-    if(!isFALSE(block)) { 
+    if(!is.null(block)) { 
     if(is.list(block)){
     # Use a slice everything that not being HMCed
       lapply(block, conf$addSampler, type = "AF_slice")
@@ -218,14 +219,17 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
       sapply(block, conf$addSampler, type = "AF_slice")
     }
     }
-  # else {
-  #   conf <- configureMCMC(model, monitors = ToMonitor, print = FALSE)
-  #   # Change the samplers to block update, using a nifty extension of the slice sampler
-  #   Slicesamplers <-c('epsilon', 'varepsilon')
-  #   conf$removeSamplers(Slicesamplers)
-  #   conf$addSampler(target = Slicesamplers, type = "AF_slice")
-  # }
-#  nimbleOptions(MCMCusePredictiveDependenciesInCalculations = FALSE)
+    
+    if(!is.null(RW)) { 
+    if(is.list(RW)){
+    # Use a slice everything that not being HMCed
+      lapply(RW, conf$addSampler, type = "RW")
+    }else{
+      # Use a slice everything that not being HMCed
+      sapply(RW, conf$addSampler, type = "RW")
+    }
+    }
+    
   mcmc <- buildMCMC(conf)
   cmcmc <- compileNimble(mcmc, project = model)
   res <- runMCMC(cmcmc,  niter=NIter, nburnin = Nburn, thin=Nthin, 
@@ -284,8 +288,6 @@ for(q in 2:consts$nLVs){
 }else{
   blockList = list(c("BSTAR","epsilonSTAR"),c("OSTAR","varepsilonSTAR"))
 }
-# don't forget the intercept
-blockList <- append(blockList, "beta0")
 blockList
 }
 ```
@@ -387,7 +389,8 @@ chains.unsgn <- ParaNimble(4, fun = RunOneChain,
                        inits = inits, 
 #                       Nburn = 5e1, NIter = 5.5e2, Nthin = 1, # for a small run
                        Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
-                       consts = consts, block = MakeBlockList(consts)) # HMC on the rest (hypers)
+                       consts = consts, 
+                       block = MakeBlockList(consts), RW = paste0("beta0[",1:consts$NSpecies,"]")) # HMC on the rest (hypers)
 
 # post-process chains for sign-swapping
 VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
