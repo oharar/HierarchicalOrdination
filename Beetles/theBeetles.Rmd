@@ -12,7 +12,9 @@ knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
 
 This document describes fitting a hierarchical ordination to data, including code and the details that are needed.
 
-The data is available on [figshare](https://doi.org/10.6084/m9.figshare.c.3297428.v1), but was originally collected by [Ribera *et al.* (2001)](https://doi.org/10.1890/0012-9658(2001)082[1112:EOLDAS]2.0.CO;2). It includes abundance observations of 68 ground beetles 87 sites in Scotland, along with 17 environmental variables and 20 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. The methodological question is how does hierarchical ordination help.
+## The data
+
+The data is available on [figshare](https://doi.org/10.6084/m9.figshare.c.3297428.v1), but was originally collected by [Ribera *et al.* (2001)](https://doi.org/10.1890/0012-9658(2001)082[1112:EOLDAS]2.0.CO;2), and reanalyzed by [Niku *et al.* (2021)](https://onlinelibrary.wiley.com/doi/full/10.1002/env.2683). It includes abundance observations of 68 ground beetles 87 sites in Scotland, along with 17 environmental variables and 20 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. The methodological question is how does hierarchical ordination help.
 
 The abundances, traits and environment are each stored in a different matrix. First we load the data and set some constants:
 
@@ -22,26 +24,30 @@ library(nimbleHMC)
 library(mvabund)
 library(coda)
 library(gllvm)
+library(lattice)
 
-Y <- t(read.csv("/home/bertv/HierarchicalOrdinationOharar/Beetles/Y.csv"))
+# Response data
+Y <- t(read.csv("Beetles/Y.csv"))
 colnames(Y) <- Y[2,]
 Y<-Y[-c(1:2),-c(1,70:71)]
 Y <- as.data.frame(apply(Y,2,as.integer))
-X <- read.csv("/home/bertv/HierarchicalOrdinationOharar/Beetles/X.csv")[,-c(1:5)]
+
+# Environmental predictors
+X <- read.csv("Beetles/X.csv")[,-c(1:5)]
 X <- as.data.frame(apply(X,2,as.numeric))
 X$Sampling.year <- X$Sampling.year - min(X$Sampling.year)
 X$Texture <- as.factor(X$Texture)
-TR  <- read.csv("/home/bertv/HierarchicalOrdinationOharar/Beetles/TR.csv")
+
+# Traits
+TR  <- read.csv("Beetles/TR.csv")
 row.names(TR) <- TR$SPECIES
 TR <- TR[,-c(1:3)]
-# Standardize data
-X <- scale(model.matrix(~0+.,X)) # environmental variables
-qrX <- qr(X)
-X <- X[,qrX$pivot[1:qrX$rank],drop=F] # omit redundant predictors
-TR <- scale(model.matrix(~0+.,TR)) # species traits
-qrTR <- qr(TR)
-TR <- TR[,qrTR$pivot[1:qrTR$rank],drop=F] # omit redundant traits
 
+# Data standardization
+X <- scale(model.matrix(~.,X))[,-1] # environmental variables
+TR <- scale(model.matrix(~.,TR))[,-1] # species traits
+
+# Constants
 NSites <- nrow(Y) # number of sites
 NSpecies <- ncol(Y) # number of species
 NTraits <- ncol(TR) # number of traits
@@ -53,25 +59,34 @@ consts <- list(NSites = NSites, NEnv = NEnv, NTraits = NTraits, NSpecies = NSpec
 ```
 
 ## The Model
+<details><summary>A quick look with the *mvabund* *R-package* indicates that the Poisson mean-variance assumption is inappropriate here.</summary>
 
-The data are counts of each species so we assume they follow a Poisson distribution with a log link function, as we would do in a standard generalised linear model. We assume that each species has a different mean abundance (i.e. for each species $j$ we have a different intercept $\beta_{0j}$), and model the rest of the variation with a hierarchical ordination. This gives the following mean model on the link scale (with linear predictor $\eta_{ij}$):
+```{r meanvar, cache=TRUE, message=FALSE}
+meanvar.plot(Y, ylab="Sample variances (log scale)", xlab="Sample means (log scale)")
+abline(a = 0, b = 1, col = "blue")
+```
+
+See [Warton (2008)](https://onlinelibrary.wiley.com/doi/pdf/10.1111/j.1442-9993.2007.01816.x) for more information.
+
+</details>
+
+So, we that the counts for each species follow a negative binomial distribution with a log link function, as we would in a standard generalized linear model. We assume that each species has a different mean abundance (i.e. for each species $j$ we have a different intercept $\beta_{0j}$), and model the rest of the variation with a hierarchical ordination. This gives the following mean model on the link scale (with linear predictor $\eta_{ij}$):
 
 $$
 \eta_{ij} = \beta_{0j} + \boldsymbol{z}_i^\top \boldsymbol{\Sigma} \boldsymbol{\gamma}_j.
 $$
 
-As with any ordination, $\boldsymbol{z}$ and $\boldsymbol{\gamma}_j$ are the site scores and species loadings, and the columns of $\boldsymbol{Z}$ are the latent variables (which holds the site scores as the rows). Here we assume that they each have a variance of one, so that $\boldsymbol{\Sigma}$ holds the variation of the latent variables: it will typically be a diagonal matrix, and if any of the terms on the diagonal are close to zero, this suggests that latent variable has (almost) no effect. It thus provides a straightforward summary of the relative importance of that latent variable, and is similar to the square root of eigenvalues (singular values) in an eigenanalysis.
+As with any ordination, $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ are the site scores and species loadings, and the columns of $\boldsymbol{Z}$ are the latent variables (which holds the site scores as the rows). Here we assume that each latent variable has a variance of one, so that $\boldsymbol{\Sigma}$ holds the variation of the latent variables: it will typically be a diagonal matrix, and if any of the terms on the diagonal are close to zero, this suggests that latent variable has (almost) no effect. It thus provides a straightforward summary of the relative importance of that latent variable, and is similar to the square root of eigenvalues (singular values) in an eigenanalysis.
 
 If we stopped here, this would be a standard Generalized Linear Latent Variable Model. But, here we want to model both $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$, i.e. go from modelling model groups of species responding in similar ways to sites to modelling how the traits of the species affect their responses to the environment.
 
 As a simplification, we can think about this as simply a regression of $\boldsymbol{z}_i$ (the site effects) against the environmental variables and $\boldsymbol{\gamma}_j$ against the traits. In reality, it is more complicated, because $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ are estimated in the model, so their uncertainty needs to be propagated.
 
 <details><summary>Some more mathematical details are hidden away here, for those who are interested.</summary>
-We denote the abundance at site $i = 1 \dots n$ for species $j = 1 \dots p$ as $Y_{ij}$, or as a matrix as $\boldsymbol{Y}$. The environmental variables are $x_{ik}$ for the $k = 1 \ldots K$ predictors (or $\boldsymbol{X}$ as a matrix), and $t = 1\ldots T$ traits as $\boldsymbol{TR}$. We then assume
+We denote the abundance at site $i = 1 \dots n$ for species $j = 1 \dots p$ as $Y_{ij}$, or as a matrix as $\boldsymbol{Y}$. The environmental variables are $x_{ik}$ for the $k = 1 \ldots K$ predictors (or $\boldsymbol{X}$ as a matrix), and $t = 1\ldots T$ traits as $\boldsymbol{TR}$. We then assume:
 
-$$Y_{ij} \sim \text{Pois}(\lambda_{ij}),$$
-
-with
+$$Y_{ij} \sim \text{NB}(\lambda_{ij}, \phi_j),$$
+where $\phi_j$ is the scale parameter for each species. Also,
 
 $$\text{log}(\lambda_{ij}) = \eta_{ij}.$$
 
@@ -84,12 +99,12 @@ $$
 We then model $\boldsymbol{z}_i$ (as in [van der Veen *et al.* (2023)](https://besjournals.onlinelibrary.wiley.com/doi/full/10.1111/2041-210X.14035)) and $\boldsymbol{\gamma}_j$ hierarchically:
 
 $$
-\boldsymbol{z}_i = \boldsymbol{B}^\top\boldsymbol{x}_i + \boldsymbol{\epsilon}_i
+\boldsymbol{z}_i = \boldsymbol{B}^\top\boldsymbol{x}_i + \boldsymbol{\epsilon}_i,
 $$
 and 
 
 $$
-\boldsymbol{\gamma}_j = \boldsymbol{\omega}^\top\boldsymbol{TR}_{j} + \boldsymbol{\varepsilon}_j
+\boldsymbol{\gamma}_j = \boldsymbol{\omega}^\top\boldsymbol{TR}_{j} + \boldsymbol{\varepsilon}_j,
 $$
 where:
 
@@ -106,77 +121,14 @@ Note that the predictors are all standardized to zero mean and unit variance. We
 
 # Implementation 
 
-We fit the model with the \texttt{Nimble} \texttt{R}-package. We start with a single dimension for simplicity, so that we can show the steps needed.
+We fit the model with the *Nimble* *R*-package. 
 
-### One dimensional ordination
+<details><summary>All functions that we need for or after model fitting are here.</summary>
 
-To fit the model we need to 1) code up the likelihood, 2) specify the Markov Chain Monte carlo samplers and initial values, 3) run it. We parallelise running the MCMC so that each chain is run on a different processor. This means we need a function to run one chain, and then another to run all of the chains together.
+<details><summary>Code to generate initial values from prior distributions is here.</summary>
 
-<details><summary>The Nimble code for the model and likelihood is here</summary>
-
-```{r model_code, message=FALSE, warning=FALSE}
-OneLV.nim <- nimbleCode({
-  for (i in 1:NSites) {
-    for (j in 1:NSpecies) {
-# These three lines specify the model:   
-      Y[i, j] ~ dnegbin(phi[j]/(phi[j]+lambda[i, j]), phi[j]) # Likelihood: Y follows a NB distribution
-      
-      log(lambda[i, j]) <- eta[i, j] # Specify the log link function
-      eta[i,j] <- beta0[j] + gamma[j]*sd.LV*z[i] # linear predictor: species + LV
-    }
-# Site scores: regression against environmental effects
-#    the Bs are the coefficients of the environmental effects
-      epsilonSTAR[i] ~ dnorm(0, sd = sd.Site) # Residual site effect
-      XB[i] <- inprod(X[i, 1:NEnv],BSTAR[1:NEnv])
-      zSTAR[i] <- XB[i] + epsilonSTAR[i]
-  }
-  
-  for(j in 1:NSpecies) {
-# Species effects: regression against trait effects
-#    The Os are the trait effects.
-      varepsilonSTAR[j] ~ dnorm(0, sd = sd.Species) # Residual
-      omegaTR[j] <- inprod(TR[j, 1:NTraits],OSTAR[1:NTraits])
-      gammaSTAR[j] <- omegaTR[j] + varepsilonSTAR[j]
-      beta0[j] ~ dnorm(0, sd = 1) # Species means
-  }
-  
-# Here we standardise z and gamma, so the both have a variance of 1.
-#   The standard deviation of the latent variable is sd.LV.
-    zmu <- mean(zSTAR[1:NSites])
-    gammamu<- mean(gammaSTAR[1:NSpecies])
-    StdDev.z <- sqrt(mean((zSTAR[1:NSites] - zmu)^2))
-    StdDev.gamma <- sqrt(mean((gammaSTAR[1:NSpecies] - gammamu)^2))
-    z[1:NSites] <- zSTAR[1:NSites]/StdDev.z
-    gamma[1:NSpecies] <- gammaSTAR[1:NSpecies]/StdDev.gamma
-    
-# Scale other parameters
-    epsilon[1:NSites] <- epsilonSTAR[1:NSites]/StdDev.z
-    B[1:NEnv] <-  BSTAR[1:NEnv]/StdDev.z
-    varepsilon[1:NSpecies] <- varepsilonSTAR[1:NSpecies]/StdDev.gamma
-    O[1:NTraits] <-  OSTAR[1:NTraits]/StdDev.gamma
-
-    # priors for scales
-    sd.Site ~ dexp(1)
-    sd.Species ~ dexp(1)
-    sd.LV ~ dexp(1)
-
-    for(k in 1:NEnv){
-      BSTAR[k] ~ dnorm(0, sd = 1)  
-    }
-    for(tr in 1:NTraits){
-      OSTAR[tr] ~ dnorm(0, sd = 1)
-    }
-     for(j in 1:NSpecies){
-      phi[j] ~ dexp(1)
-    }
-})
-```
-</details>
-
-<details><summary>Code to generate initial values is here 
-</summary>
-
-```{r init}
+```{r initsFunc}
+# 1LV function
 inits <- function(consts){
   B = rnorm(consts$NEnv)
   O = rnorm(consts$NTraits)
@@ -194,13 +146,34 @@ inits <- function(consts){
     phi = rexp(consts$NSpecies)
   )
 }
-```
 
+# 2LV function
+inits2 <- function(consts){
+    B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
+    B[upper.tri(B)] = 0
+    O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
+    O[upper.tri(O)] = 0
+    varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
+    epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
+    list(
+        BSTAR = B,
+        OSTAR = O,
+        epsilonSTAR = epsilon,
+        varepsilonSTAR = varepsilon,
+        sd.Site = rexp(consts$nLVs),
+        sd.Species = rexp(consts$nLVs),
+        beta0 = rnorm(consts$NSpecies),
+        sd.LV = rexp(consts$nLVs),
+        phi = rexp(consts$NSpecies)
+    )
+}
+```
 </details>
 
 <details><summary>Functions for MCMC are here.</summary>
 
-```{r mcmc_code}
+```{r MCMCFunc}
+# Function to run a single chain
 RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL, 
                         Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, RW = NULL, ...) {
   require(nimble)
@@ -249,7 +222,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   return(res)
 }
 
-# Function to run parallel chains
+# Function to run chains in  parallel
 ParaNimble <- function(NChains, ...) {
   opts <- list(...)
   if(!is.null(opts$seeds) && (length(opts$seeds) == NChains)){
@@ -291,9 +264,10 @@ blockList <- c(sapply(1:consts$nLVs,
          consts = consts,simplify=F)
        )
 if(consts$nLVs>1){
-# remove entries of BSTAR that are fixed
+# remove entries of B,O-STAR that are fixed
 for(q in 2:consts$nLVs){
   blockList[[q]] <- blockList[[q]][-(1:(q-1))]
+  blockList[-c(1:consts$nLVs)][[q]] <- blockList[-c(1:consts$nLVs)][[q]][-(1:(q-1))]
 }
 }
 }else{
@@ -305,17 +279,8 @@ blockList
 
 </details>
 
-Latent variable models are notorious for being unidentifiable, you can get the same mean abundances from different combinations of the parameters. We have to make some adjustments to the model to account for this: some of this is done in the model fitting, but for others it is easier to do it after we obtain the posterior samples.
-
-<details><summary>The details of what we do to make the HO identifiable are here</summary>
-
-- First, we standardise $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ to unit variance per latent variable to prevent scale invariance
-- At this point the model is still invariant to sign switching: because $z_{i}\gamma_{j} = (-z_{i})(-\gamma_{j})$ in the MCMC algorithm can (and does) switch signs mid run. We could solve it by placing a truncated normal prior on the main diagonal entries of $\boldsymbol{B}$ or $\boldsymbol{\omega}$, but that results in bimodal posterior distributions for other coefficients. Instead we impose sign constraints by post-process the chains. We choose one parameter, for example one $z_{i}$ or $\gamma_{j}$, to be positive, and switch all of the other parameters based on that one. See below for the details of how we fix the signs.
-
-The functions to swap the signs are included below. We want to make one parameter positive, so ideally we want to do this to a parameter that has both modes away from zero. We can identify this in an **ad hoc** way: for each chain for every parameter we calculate the proportion of iterations where the sign is positive, and then for every parameter we calculate the variance in that proportion. If a parameter is centered around 0 the mean proportion will be about 0.5, and will not vary much, whereas if it is some way from 0 the mean will be close to 0 or 1, and the variance will be high. ALternativley, we coiuld look at the largest $|p - 0.5|$, or we can vissually identify such parameters from the posterior samples. There may be even better alternatives.
-
-```{r ProcessFunction}
-
+<details><summary>Functions to process results after MCMC are here.</summary>
+```{r ProcessFunc}
 # Utility Function to get logical indicators for if names contains a string in v
 GetInds <- function(v, names) {
   if(length(v)==1) {
@@ -341,8 +306,6 @@ ReSignChain <- function(chain, varinds, vartosign) {
   }, vs=vartosign, vi=varinds))
   as.mcmc(res)
 }
-
-
 
 # Function to post-process chains to swap signs.
 postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NULL, print=FALSE) {
@@ -387,256 +350,6 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
   as.mcmc.list(chains.sgn)
 }
 
-```
-
-</details>
-
-Finally, we can run the MCMC.
-```{r MCMCrun, message=FALSE}
-consts$nLVs = 1
-chains.unsgn <- ParaNimble(4, fun = RunOneChain,
-                       dat = dat,
-                       code = OneLV.nim,
-                       inits = inits, 
-#                       Nburn = 5e1, NIter = 5.5e2, Nthin = 1, # for a small run
-                       Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
-                       consts = consts, 
-                       block = MakeBlockList(consts, LVwise = TRUE), RW = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers)
-
-# post-process chains for sign-swapping
-VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
-VarsToSign <- c("^B")
-chains <- postProcess(chains.unsgn, VarsToProcess = VarsToProcess, 
-                      VarToSign = VarsToSign, print = TRUE, VarsToSwapBy = "B[26]")
-summ.HO = summary(chains)
-```
-
-### Results
-
-There are a lot of parameters, so a lot of results to look at. Here we concentrate on $\boldsymbol{B}$, $\boldsymbol{\omega}$, $\boldsymbol{\sigma}$ and $\boldsymbol{\delta}$, and a latent variable-plot.
-
-<details>
-    <summary>We can look at the chains, to see that they have converged.</summary>
-
-First the environmental effects:
-
-```{r results1, warning=FALSE, message=FALSE}
-library(basicMCMCplots)
-chainsPlot(chains, var = c("B"), legend = F,traceplot = F, densityplot = T)
-
-```
-
-Then the trait effects:
-
-```{r ResO, warning=FALSE,message=FALSE, fig.height=10}
-chainsPlot(chains, var = c("O"), legend = F,traceplot = F)
-
-```
-
-</details>
-
-These look quite OK (after post-processing the signs). Now we can create a plot of the site scores against their indices to inspect the results.
-
-<details><summary>We use a plotting function, which is hidden here</summary>
-
-```{r plotEnv1LVfunction, warning=FALSE,message=FALSE, fig.height=4}
-PlotPost <- function(var, summ, varnames=NULL, ...) {
-  vars <- grep(var, rownames(summ$statistics))
-  if(is.null(varnames)) varnames <- rownames(summ$statistics)[grep(var, rownames(summ$statistics))]
-  if(length(varnames)!=length(vars)) 
-    stop(paste0("Number of variable names, ", length(varnames), "not the same as number of variables, ",
-                length(vars)))
-  
-  plot(summ$statistics[vars,"Mean"], 1:length(vars), 
-       xlim=range(summ$quantiles[vars,]), yaxt="n", ...)
-  segments(summ$quantiles[vars,"2.5%"], 1:length(vars), summ$quantiles[vars,"97.5%"], 1:length(vars))
-  segments(summ$quantiles[vars,"25%"], 1:length(vars), summ$quantiles[vars,"75%"], 1:length(vars), lwd=3)
-  abline(v=0, lty=3)
-  axis(2, at=1:length(vars), labels=varnames, las=1)
-}
-```
-</details>
-
-```{r plotEnv1LV, warning=FALSE,message=FALSE, fig.height=4}
-par(mar = c(4.1, 4.5, 1, 1))
-PlotPost(var = "B", summ = summ.HO, varnames = gsub("\\.", "\n", colnames(X)), 
-         xlab = "Environmental Effect", ylab = "")
-
-```
-
-We can see that both Coarse Woody Debris (CWD) and canopy cover have positive effects on the latent variable, so ants that have a positive species score will be more abundant in areas with more canopy cover and CWD. 
-
-We can also look at the trait effects. The bottom line is that there is too much uncertainty to say anything.
-
-
-```{r plotTraits1LV, warning=FALSE,message=FALSE, fig.height=6}
-par(mar=c(4.1, 7, 1, 1))
-PlotPost(var = "O", summ = summ.HO, varnames = gsub("\\.", "\n", colnames(TR)), 
-         xlab = "Trait Effect", ylab = "")
-
-```
-
-We can also calculate the full distributions of site and species scores, and plot them. We see that, well, there is variation, so the trait effects are not uncertain because the species scores are uncertain: it is because their effects are small.
-
-```{r PlotScores, fig.height=14}
-par(mfrow = c(2, 1), mar = c(2, 12, 4, 1))
-PlotPost("^z", summ = summ.HO, varnames = NULL, ylab = "", xlab = "Latent variable 1", main = "Sites")
-PlotPost("^gamma", summ = summ.HO, varnames = NULL, ylab = "", xlab = "Latent variable 1", main = "Species")
-
-```
-
-## More dimensions
-
-More than one dimension requires adding extra identifiability constraints. Now that we have two or more latent variables, we also have to worry about their rotation.
-
-<details><summary>For those who are interested, this is how we deal with the rotation</summary>
-There are various ways to place the constraints, some more numerically stable than others. Generally, we note that the model on the link scale is similar to existing matrix decompositions, so that much about the required constraints can be learned from those.
- 
-To prevent rotational invariance, we require $\boldsymbol{B}$ to have zeros above the main diagonal. Note that for a number of latent variables greater than the number of predictors $K$, we need to add extra constraints to $\boldsymbol{\omega}$. van der Veen *et al* (2023) assumed $\boldsymbol{B}$ to be a semi-orthogonal matrix instead, as they encountered numerical instability with the constraints that we impose here. However, their constraint would require sampling on constrained parameter spaces, which is difficult, while this constraint formulation allows to use standard out-of-the-box MCMC samplers (also, it seems to work fine here). Note, that when $d \gt p,t $ the model is rotationally invariant, and additional constraints will need to be added.
-</details>
-
-<details><summary>The new model code is included here</summary>
-
-```{r model2_code}
-# Model code
-# Update our constants from before with the new number of LVs, rest remains the same
-# Model code
-HO.nim <- nimbleCode({
-  for (i in 1:NSites) {
-    for (j in 1:NSpecies) {
-      eta[i,j] <- beta0[j] + sum(gamma[j,1:nLVs]*sd.LV[1:nLVs]*z[i,1:nLVs])
-      log(lambda[i, j]) <- eta[i, j]
-      Y[i, j] ~ dnegbin(phi[j]/(phi[j]+lambda[i, j]), phi[j])
-    }      
-    for (l in 1:nLVs) {
-      XB[i, l] <- sum(X[i, 1:NEnv]*BSTAR[1:NEnv, l])
-      epsilonSTAR[i,l] ~ dnorm(0,sd.Site[l])#Residual
-      zSTAR[i,l] <- XB[i,l] + epsilonSTAR[i,l]
-    }
-  }
-  
-  for(j in 1:NSpecies) {
-    for (l in 1:nLVs) {
-      omegaTR[j, l] <- sum(TR[j, 1:NTraits]*OSTAR[1:NTraits, l])
-      varepsilonSTAR[j,l] ~ dnorm(0,sd.Species[l]) # Residual
-      gammaSTAR[j,l] <- omegaTR[j,l] + varepsilonSTAR[j,l]
-    }
-    
-    beta0[j] ~ dnorm(0, sd=1)
-  }
-  # Constraints to 0 on upper diagonal
-  # stole some code from Boral for this - thanks Francis
-  for(l in 1:(nLVs-1)) { 
-    for(ll in (l+1):(nLVs)) {
-      BSTAR[l,ll] <- 0 
-    } 
-  }
-
-    
-  for(l in 1:nLVs) { 
-    # diagonal elements
-    BSTAR[l,l] ~ dnorm(0,sd=1)
-
-    ## standardizing z and gamma
-    zmu[l] <- mean(zSTAR[1:NSites,l])
-    StdDev.z[l] <- sqrt(mean((zSTAR[1:NSites,l] - zmu[l])^2))
-    z[1:NSites,l] <- (zSTAR[1:NSites,l]-zmu[l])/StdDev.z[l]
-    
-    gammamu[l] <- mean(gammaSTAR[1:NSpecies,l])
-    StdDev.gamma[l] <- sqrt(mean((gammaSTAR[1:NSpecies,l] - gammamu[l])^2)) 
-    gamma[1:NSpecies,l] <- (gammaSTAR[1:NSpecies,l]-gammamu[l])/StdDev.gamma[l]
-    
-  # Scale other parameters
-    epsmu[l] <- mean(epsilonSTAR[1:NSites,l])
-    varepsmu[l] <- mean(varepsilonSTAR[1:NSpecies,l])
-    
-    epsilon[1:NSites,l] <- (epsilonSTAR[1:NSites,l]-epsmu[l])/StdDev.z[l]
-    B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
-    varepsilon[1:NSpecies,l] <- (varepsilonSTAR[1:NSpecies,l]-varepsmu[l])/StdDev.gamma[l]
-    O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
-  
-    # priors for scales
-    sd.Site[l] ~ dexp(1)
-    sd.Species[l] ~ dexp(1)
-    sd.LV[l] ~ dexp(1)
-    } 
-  
-  ## Free lower diagonals
-  for(l in 2:nLVs) { 
-    for(ll in 1:(l-1)) { 
-      BSTAR[l,ll] ~ dnorm(0,sd=1)
-      } 
-    }
-  for(l in (nLVs+1):NEnv) { 
-    for(ll in 1:(nLVs)) { 
-      BSTAR[l,ll] ~dnorm(0,1) 
-    } 
-  } ## All other elements
-
-  # Prior for trait effects
-    for(tr in 1:NTraits){
-    for(l in 1:nLVs){
-      OSTAR[tr,l] ~dnorm(0,1)
-    }
-    }
-     for(j in 1:NSpecies){
-      phi[j] ~ dexp(1)
-    }
-})
-```
-
-</details>
-
-<details><summary>We create a new function to simulate starting values from the prior distributions, which we can hide away</summary>
-
-```{r init2}
-inits <- function(consts){
-    B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
-    B[upper.tri(B)] = 0
-    O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
-    varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
-    epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
-    list(
-        BSTAR = B,
-        OSTAR = O,
-        epsilonSTAR = epsilon,
-        varepsilonSTAR = varepsilon,
-        sd.Site = rexp(consts$nLVs),
-        sd.Species = rexp(consts$nLVs),
-        beta0 = rnorm(consts$NSpecies),
-        sd.LV = rexp(consts$nLVs),
-        phi = runif(consts$NSpecies, 0, 50)
-    )
-}
-```
-</details>
-
-<details><summary>We rotate the ordination after the MCMC to make it more interpretable. Here is code to do that, and an explanation of what is done.</summary>
-
-Our model is:
-
-$$
-\eta_{ij} = \beta_{0j} + \boldsymbol{z}_i^\top \boldsymbol{\Sigma} \boldsymbol{\gamma}_j.
-$$
-
-But we can rotate by a rotation matrix $M$ this to get an equivalent model:
-
-$$
-\eta_{ij} = \beta_{0j} + \boldsymbol{z}_j^\top \boldsymbol{M} \boldsymbol{\Sigma} \boldsymbol{M}^\top\boldsymbol{\gamma}_i.
-$$
-There are many possible rotations (see the [https://cran.r-project.org/web/packages/GPArotation/index.html](GPArotation) package for a long list). Here we will just rotate abased on a singular value decomposition (SVD) of the latent variables, as in the *gllvm* *R*-package [Niku *et al.*](https://cran.r-project.org/web/packages/gllvm/index.html). This rotates the ordination so that most of the variation in $\boldsymbol{z}_i^\top \boldsymbol{\Sigma}$ is put on the first latent variable, and so that the second latent variable has the next largest amount of variance. Note, that this does not guarantee that these are the latent variables that explain most variation in the response, unlike in eigenanalysis.
-
-In detail, for each draw from the posterior we:
-
-1. Multiply the LV-specific standard deviations by the column-wise standard deviation of $\boldsymbol{Gamma}$ and/or $\boldsymbol{Z}$ as deemed appropriate
-2. Column-wise re-scale $\boldsymbol{B}, \boldsymbol{E}, \boldsymbol{\Gamma}, \boldsymbol{Z}, \boldsymbol{\Omega}$ and $\boldsymbol{\mathcal{E}}$: so that both $\boldsymbol{Z}$ and $\boldsymbol{\Gamma}$ have column-wise unit variance.
-3. Calculate a rotation matrix $\boldsymbol{M}$ from $\boldsymbol{Z}\Sigma$
-4. Rotate $\boldsymbol{B}, \boldsymbol{E}, \Gamma, \boldsymbol{Z}, \boldsymbol{\Omega}$ and $\boldsymbol{\mathcal{E}}$
-5. Column-wise (LV-wise) re-calculate the scale of $\boldsymbol{Z}$, $\boldsymbol{E}$, $\boldsymbol{\mathcal{E}}$
-
-The first step sweeps the scale of the LVs and loadings into the LV-specific scale so it still represents the total variance of the latent variables.
-
-```{r RotateScores}
 # Function to convert a variable in an MCMC chain that should be a matrix from 
 # a vector to the right matrix
 ChainToMatrix <- function(ch, name) {
@@ -681,7 +394,7 @@ rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotati
     }
     res
   }
-    # Function to rotate (diagonal) matrices & return the diagonal
+# Function to rotate (diagonal) matrices & return the diagonal
   RotateSD <- function(name, vec, rotmat) {
     mat <- diag(vec[grep(paste0("^", name, "\\["), names(vec))])
     rotated <- mat%*%rotmat
@@ -763,8 +476,370 @@ RescaleChains <- function(mcmc.lst, ...) {
   as.mcmc.list(rescale)
 }
 ```
+</details>
+
+<details><summary>Plotting functions.</summary>
+```{r PlottingFunc}
+PlotPost <- function(var, summ, varnames=NULL, ...) {
+  vars <- grep(var, rownames(summ$statistics))
+  if(is.null(varnames)) varnames <- rownames(summ$statistics)[grep(var, rownames(summ$statistics))]
+  if(length(varnames)!=length(vars)) 
+    stop(paste0("Number of variable names, ", length(varnames), "not the same as number of variables, ",
+                length(vars)))
+  
+  plot(summ$statistics[vars,"Mean"], 1:length(vars), 
+       xlim=range(summ$quantiles[vars,]), yaxt="n", ...)
+  segments(summ$quantiles[vars,"2.5%"], 1:length(vars), summ$quantiles[vars,"97.5%"], 1:length(vars))
+  segments(summ$quantiles[vars,"25%"], 1:length(vars), summ$quantiles[vars,"75%"], 1:length(vars), lwd=3)
+  abline(v=0, lty=3)
+  axis(2, at=1:length(vars), labels=varnames, las=1)
+}
+
+AddArrows <- function(coords, marg= par("usr"), col=2) {
+  origin <- c(mean(marg[1:2]), mean(marg[3:4]))
+  Xlength <- sum(abs(marg[1:2]))/2
+  Ylength <- sum(abs(marg[3:4]))/2
+  ends <- coords / max(abs(coords)) * min(Xlength, Ylength) * .8
+  arrows(
+    x0 = origin[1],
+    y0 = origin[2],
+    x1 = ends[,
+              1] + origin[1],
+    y1 = ends[, 2] + origin[2],
+    col = col,
+    length = 0.1)
+  text(
+    x = origin[1] + ends[, 1] * 1.1,
+    y = origin[2] + ends[, 2] * 1.1,
+    labels = rownames(coords),
+    col = col)
+}
+
+```
+</details>
+
+<details><summary>Functions to retrieve results for the 4th corner term.</summary>
+```{r EnvTraitIntFunc}
+# Function to get MCMC results for reduced-rank approximated interaction term
+getMCMCInt <- function(mcmc.lst, dat,...) {
+  int.mcmc <- lapply(mcmc.lst, function(mcmc){
+    inCoefs <- as.mcmc(t(apply(mcmc, 1, function(ch){
+    B <- ChainToMatrix(ch,"B")
+    O <- ChainToMatrix(ch,"O")  
+    SDs <- diag(ch[grep("sd.LV",gsub("\\s*\\[[^\\)]+\\]","",names(ch)))])
+    coefs <- B%*%SDs%*%t(O)
+    vec <- c(coefs)
+    names(vec) <- paste0(colnames(dat$X),":",rep(colnames(dat$TR),each=ncol(dat$X)))
+    vec
+    })))
+  }
+  )
+  as.mcmc.list(int.mcmc)
+}
+```
+</details>
+
+<details><summary>Some final summary functions.</summary>
+```{r summary}
+ExtractMeans <- function(mcmc.lst, name=NULL) { # this needs defensive programming
+  if(is.null(name)) {
+    ind <- 1:nrow(mcmc.lst$statistics)
+  } else {
+    ind <- grep(name, rownames(mcmc.lst$statistics))
+  }
+  Means <- mcmc.lst$statistics[ind,"Mean"]
+  if(any(grep(",", names(Means)))) {
+    Col <- gsub("]", "", unique(gsub(".*, ", "", names(Means))))
+    res <- sapply(Col, function(cc, mn) {
+      mn[grep(paste0(cc,"]"), names(mn))]
+    }, Means)
+  } else {
+    res <- Means
+  }
+  res
+}
+GetMeans <- function(summ, name, d=1) {
+  if(is.null(d)) d <- 1
+  var <- summ$statistics[grep(paste0('^', name), rownames(summ$statistics)),"Mean"]
+  matrix(var,ncol=d)
+}
+```
+</details>
+</details>
+
+We start with a single dimension for simplicity, so that we can show the steps needed.
+
+### One dimensional ordination
+
+To fit the model we need to 1) code up the likelihood, 2) specify the Markov Chain Monte carlo samplers and initial values, 3) run it. We parallelise running the MCMC so that each chain is run on a different processor. This means we need a function to run one chain, and then another to run all of the chains together.
+
+<details><summary>The Nimble code for the model and likelihood is here</summary>
+
+```{r model_code, message=FALSE, warning=FALSE}
+OneLV.nim <- nimbleCode({
+  for (i in 1:NSites) {
+    for (j in 1:NSpecies) {
+# These three lines specify the model:   
+      Y[i, j] ~ dnegbin(phi[j]/(phi[j]+lambda[i, j]), phi[j]) # Likelihood: Y follows a NB distribution
+      
+      log(lambda[i, j]) <- eta[i, j] # Specify the log link function
+      eta[i,j] <- beta0[j] + gamma[j]*sd.LV*z[i] # linear predictor: species + LV
+    }
+# Site scores: regression against environmental effects
+#    the Bs are the coefficients of the environmental effects
+      epsilonSTAR[i] ~ dnorm(0, sd = sd.Site) # Residual site effect
+      XB[i] <- inprod(X[i, 1:NEnv],BSTAR[1:NEnv])
+      zSTAR[i] <- XB[i] + epsilonSTAR[i]
+  }
+  
+  for(j in 1:NSpecies) {
+# Species effects: regression against trait effects
+#    The Os are the trait effects.
+      varepsilonSTAR[j] ~ dnorm(0, sd = sd.Species) # Residual
+      omegaTR[j] <- inprod(TR[j, 1:NTraits],OSTAR[1:NTraits])
+      gammaSTAR[j] <- omegaTR[j] + varepsilonSTAR[j]
+      beta0[j] ~ dnorm(0, sd = 1) # Species means
+  }
+  
+# Here we standardise z and gamma, so the both have a variance of 1.
+#   The standard deviation of the latent variable is sd.LV.
+    zmu <- mean(zSTAR[1:NSites])
+    gammamu<- mean(gammaSTAR[1:NSpecies])
+    StdDev.z <- sqrt(mean((zSTAR[1:NSites] - zmu)^2))
+    StdDev.gamma <- sqrt(mean((gammaSTAR[1:NSpecies] - gammamu)^2))
+    z[1:NSites] <- zSTAR[1:NSites]/StdDev.z
+    gamma[1:NSpecies] <- gammaSTAR[1:NSpecies]/StdDev.gamma
+    
+# Scale other parameters
+    epsilon[1:NSites] <- epsilonSTAR[1:NSites]/StdDev.z
+    B[1:NEnv] <-  BSTAR[1:NEnv]/StdDev.z
+    varepsilon[1:NSpecies] <- varepsilonSTAR[1:NSpecies]/StdDev.gamma
+    O[1:NTraits] <-  OSTAR[1:NTraits]/StdDev.gamma
+
+    # priors for scales
+    sd.Site ~ dexp(1)
+    sd.Species ~ dexp(1)
+    sd.LV ~ dexp(1)
+
+    for(k in 1:NEnv){
+      BSTAR[k] ~ dnorm(0, sd = 1)  
+    }
+    for(tr in 1:NTraits){
+      OSTAR[tr] ~ dnorm(0, sd = 1)
+    }
+     for(j in 1:NSpecies){
+      phi[j] ~ dexp(1)
+    }
+})
+```
+</details>
+
+Latent variable models are notorious for being unidentifiable, you can get the same mean abundances from different combinations of the parameters. We have to make some adjustments to the model to account for this: some of this is done in the model fitting, but for others it is easier to do it after we obtain the posterior samples.
+
+<details><summary>The details of what we do to make the HO identifiable are here</summary>
+
+- First, we standardise $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ to unit variance per latent variable to prevent scale invariance
+- At this point the model is still invariant to sign switching: because $z_{i}\gamma_{j} = (-z_{i})(-\gamma_{j})$ in the MCMC algorithm can (and does) switch signs mid run. We could solve it by placing a truncated normal prior on the main diagonal entries of $\boldsymbol{B}$ or $\boldsymbol{\omega}$, but that results in bimodal posterior distributions for other coefficients. Instead we impose sign constraints by post-process the chains. We choose one parameter, for example one $z_{iq}$ or $\gamma_{jq}$, to be positive, and switch all of the other parameters based on that one. See below for the details of how we fix the signs.
+
+We want to make one parameter positive, and ideally we want to do this to a parameter that clearly has both modes away from zero. We can identify this in an **ad hoc** way: for each chain for every parameter we calculate the proportion of iterations where the sign is positive, and then for every parameter we calculate the variance in that proportion. If a parameter is centered around 0 the mean proportion will be about 0.5, and will not vary much, whereas if it is some way from 0 the mean will be close to 0 or 1, and the variance will be high. Alternativley, we could look at the largest $|p - 0.5|$, or we can visually identify such parameters from the posterior samples. There may be even better alternatives, and most of the time visual inspection of posterior density plots is most straightforward.
+</details>
+
+Finally, we can run the MCMC. We use a block slice sampler for the predictor effects and residual terms, a random walk sampler for the intercepts and dispersion parameters, and Hamiltonian Monte Carlo for the remaining scale parameters.
+```{r MCMCrun, message=FALSE}
+consts$nLVs = 1
+chains.unsgn <- ParaNimble(4, fun = RunOneChain,
+                       dat = dat,
+                       code = OneLV.nim,
+                       inits = inits, 
+#                       Nburn = 5e1, NIter = 5.5e2, Nthin = 1, # for a small run
+                       Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
+                       consts = consts, 
+                       block = MakeBlockList(consts, LVwise = TRUE), RW = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers)
+
+# post-process chains for sign-swapping
+VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
+VarsToSign <- c("^B")
+chains <- postProcess(chains.unsgn, VarsToProcess = VarsToProcess, 
+                      VarToSign = VarsToSign, print = TRUE, VarsToSwapBy = "B[26]")
+summ.HO = summary(chains)
+```
+
+### Results
+
+There are a lot of parameters, so a lot of results to look at. Here we concentrate on $\boldsymbol{B}$, $\boldsymbol{\omega}$, $\boldsymbol{\sigma}$ and $\boldsymbol{\delta}$, and a latent variable-plot.
+
+<details>
+    <summary>We can look at the chains, to see that they have converged.</summary>
+
+First the environmental effects:
+
+```{r results1, warning=FALSE, message=FALSE, fig.height = 30}
+library(basicMCMCplots)
+chainsPlot(chains, var = "B", legend = F)
+
+```
+
+Then the trait effects:
+
+```{r ResO, warning=FALSE, message=FALSE, fig.height = 30}
+chainsPlot(chains, var = "O", legend = F)
+
+```
 
 </details>
+
+These look quite OK (after post-processing the signs). Now we can create a plot of the site scores against their indices to inspect the results.
+
+```{r plotEnv1LV, warning=FALSE,message=FALSE, fig.height=10}
+par(mar=c(4.1, 7, 1, 1))
+PlotPost(var = "B", summ = summ.HO, varnames = gsub("\\.", " ", colnames(X)), 
+         xlab = "Environmental Effect", ylab = "")
+```
+
+We can see that all effects are quite uncertain, but that management intensity, elevation, and pH have non-zero effects effects on the latent variable. Management has a positive coefficient, elevation negative, and pH positive so beetles that have a positive species score will be more abundant in areas with more intense management, lower elevation, and more basic pH; i.e., lowlands. 
+
+We can also look at the trait effects. The bottom line is that there is too much uncertainty to say much, but LTL (beetle length) has a non-zero negative effect.
+
+```{r plotTraits1LV, warning=FALSE,message=FALSE, fig.height=6}
+par(mar=c(4.1, 7, 1, 1))
+PlotPost(var = "O", summ = summ.HO, varnames = gsub("\\.", "\n", colnames(TR)), 
+         xlab = "Trait Effect", ylab = "")
+
+```
+
+We can also calculate the full distributions of site and species scores, and plot them. We see that, well, there is variation, so the trait effects are not uncertain because the species scores are uncertain: it is because their effects are small.
+
+```{r PlotScores, fig.height=14}
+par(mfrow = c(2, 1), mar = c(2, 12, 4, 1))
+PlotPost("^z", summ = summ.HO, varnames = NULL, ylab = "", xlab = "Latent variable 1", main = "Sites")
+PlotPost("^gamma", summ = summ.HO, varnames = NULL, ylab = "", xlab = "Latent variable 1", main = "Species")
+
+```
+
+## More dimensions
+
+More than one dimension requires adding extra identifiability constraints. Now that we have two or more latent variables, we also have to worry about their rotation.
+
+<details><summary>For those who are interested, this is how we deal with the rotation</summary>
+There are various ways to place the constraints, some more numerically stable than others. Generally, we note that the model on the link scale is similar to existing matrix decompositions, so that much about the required constraints can be learned from those.
+ 
+To prevent rotational invariance, we require both $\boldsymbol{B}$ and $\boldsymbol{O}$ to have zeros above the main diagonal. van der Veen *et al* (2023) assumed $\boldsymbol{B}$ to be a semi-orthogonal matrix instead, as they encountered numerical instability with the constraints that we impose here. However, their constraint would require sampling on constrained parameter spaces, which is difficult, while this constraint formulation allows to use standard out-of-the-box MCMC samplers (also, it seems to work fine here). Together with the scale constraint for the latent variables there are $d(d-1)-2K$ constraints in the model, and when $d = K$ the number of parameters is the same in the interaction terms as for the fourth corner model by [Niku *et al.*(2021)](https://onlinelibrary.wiley.com/doi/full/10.1002/env.2683). When $d \gt min(K,T)$ the model can still be fitted (but either $\boldsymbol{B}$ or $\boldsymbol{O}$ needs to be padded with a column of zeros), but with $d \gt max(d,K)$ there are no further predictor effects to be estimated (as the model includes the same number of parameters as the full rank term) and additional constraints will need to be introduced.
+</details>
+
+<details><summary>The new model code is included here</summary>
+
+```{r model2_code}
+# Model code
+# Update our constants from before with the new number of LVs, rest remains the same
+HO.nim <- nimbleCode({
+  for (i in 1:NSites) {
+    for (j in 1:NSpecies) {
+      eta[i,j] <- beta0[j] + sum(gamma[j,1:nLVs]*sd.LV[1:nLVs]*z[i,1:nLVs])
+      log(lambda[i, j]) <- eta[i, j]
+      Y[i, j] ~ dnegbin(phi[j]/(phi[j]+lambda[i, j]), phi[j])
+    }      
+    for (l in 1:nLVs) {
+      XB[i, l] <- sum(X[i, 1:NEnv]*BSTAR[1:NEnv, l])
+      epsilonSTAR[i,l] ~ dnorm(0,sd.Site[l])# Residual
+      zSTAR[i,l] <- XB[i,l] + epsilonSTAR[i,l]
+    }
+  }
+  
+  for(j in 1:NSpecies) {
+    for (l in 1:nLVs) {
+      omegaTR[j, l] <- sum(TR[j, 1:NTraits]*OSTAR[1:NTraits, l])
+      varepsilonSTAR[j,l] ~ dnorm(0,sd.Species[l]) # Residual
+      gammaSTAR[j,l] <- omegaTR[j,l] + varepsilonSTAR[j,l]
+    }
+    
+    beta0[j] ~ dnorm(0, sd=1)
+  }
+  # Constraints to 0 on upper diagonal
+  # stole some code from Boral for this - thanks Francis
+  for(l in 1:(nLVs-1)) { 
+    for(ll in (l+1):(nLVs)) {
+      BSTAR[l,ll] <- 0 
+      OSTAR[l,ll] <- 0
+    } 
+  }
+
+  for(l in 1:nLVs) { 
+    # diagonal elements
+    BSTAR[l,l] ~ dnorm(0,sd=1)
+    OSTAR[l,l] ~ dnorm(0,sd=1)
+
+    ## standardizing z and gamma
+    zmu[l] <- mean(zSTAR[1:NSites,l])
+    StdDev.z[l] <- sqrt(mean((zSTAR[1:NSites,l] - zmu[l])^2))
+    z[1:NSites,l] <- (zSTAR[1:NSites,l]-zmu[l])/StdDev.z[l]
+    
+    gammamu[l] <- mean(gammaSTAR[1:NSpecies,l])
+    StdDev.gamma[l] <- sqrt(mean((gammaSTAR[1:NSpecies,l] - gammamu[l])^2)) 
+    gamma[1:NSpecies,l] <- (gammaSTAR[1:NSpecies,l]-gammamu[l])/StdDev.gamma[l]
+    
+    # Scale other parameters
+    epsmu[l] <- mean(epsilonSTAR[1:NSites,l])
+    varepsmu[l] <- mean(varepsilonSTAR[1:NSpecies,l])
+    
+    epsilon[1:NSites,l] <- (epsilonSTAR[1:NSites,l]-epsmu[l])/StdDev.z[l]
+    B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
+    varepsilon[1:NSpecies,l] <- (varepsilonSTAR[1:NSpecies,l]-varepsmu[l])/StdDev.gamma[l]
+    O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
+  
+    # priors for scales
+    sd.Site[l] ~ dexp(1)
+    sd.Species[l] ~ dexp(1)
+    sd.LV[l] ~ dexp(1)
+    } 
+  
+  ## Free lower diagonals
+  for(l in 2:nLVs) { 
+    for(ll in 1:(l-1)) { 
+      BSTAR[l,ll] ~ dnorm(0,sd=1)
+      OSTAR[l,ll] ~ dnorm(0,sd=1)
+      } 
+  }
+  ## All other elements
+  for(l in (nLVs+1):NEnv) { 
+    for(ll in 1:(nLVs)) { 
+      BSTAR[l,ll] ~dnorm(0,1) 
+    } 
+  } 
+
+  for(l in (nLVs+1):NTraits) { 
+    for(ll in 1:(nLVs)) { 
+      OSTAR[l,ll] ~dnorm(0, 1) 
+    } 
+  } 
+
+     for(j in 1:NSpecies){
+      phi[j] ~ dexp(1)
+    }
+})
+```
+
+</details>
+
+<details><summary>We rotate the ordination after the MCMC to make it more interpretable. Here is an explanation of what is done.</summary>
+
+Our model is:
+
+$$
+\eta_{ij} = \beta_{0j} + \boldsymbol{z}_i^\top \boldsymbol{\Sigma} \boldsymbol{\gamma}_j.
+$$
+
+There are many possible rotations (see the [https://cran.r-project.org/web/packages/GPArotation/index.html](GPArotation) package for a long list). Here we will rotate based on a singular value decomposition (SVD) of the latent variables, as in the *gllvm* *R*-package [Niku *et al.*](https://cran.r-project.org/web/packages/gllvm/index.html). This rotates the ordination so that most of the variation in $\boldsymbol{z}_i^\top \boldsymbol{\Sigma}$ is put on the first latent variable, and so that the second latent variable has the next largest amount of variance. Note, that this does not guarantee that these are the latent variables that explain most variation in the response, unlike in eigenanalysis.
+
+In detail, for each draw from the posterior we:
+
+1. Multiply the LV-specific standard deviations by the column-wise standard deviation of $\boldsymbol{\Gamma}$ and/or $\boldsymbol{Z}$ as deemed appropriate
+2. Column-wise re-scale $\boldsymbol{B}, \boldsymbol{E}, \boldsymbol{\Gamma}, \boldsymbol{Z}, \boldsymbol{\Omega}$ and $\boldsymbol{\mathcal{E}}$: so that both $\boldsymbol{Z}$ and $\boldsymbol{\Gamma}$ have column-wise unit variance.
+3. Calculate a rotation matrix $\boldsymbol{M}$ from $\boldsymbol{Z}\Sigma$
+4. Rotate $\boldsymbol{B}, \boldsymbol{E}, \Gamma, \boldsymbol{Z}, \boldsymbol{\Omega}$ and $\boldsymbol{\mathcal{E}}$
+5. Column-wise (LV-wise) re-calculate the scale of $\boldsymbol{Z}$, $\boldsymbol{E}$, $\boldsymbol{\mathcal{E}}$
+
+The first step sweeps the scale of the LVs and loadings into the LV-specific scale so it still represents the total variance of the latent variables.
+<\details>
 
 We can run the fitting with the same code as before:
 
@@ -773,7 +848,7 @@ consts$nLVs <- nLVs <- 2
 HO.2LV <- ParaNimble(4, fun = RunOneChain,
                        dat = dat,
                        code = HO.nim,
-                       inits = inits,
+                       inits = inits2,
 #                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
                        Nburn = 1e3, NIter = 5e3, Nthin = 1, # for a full run
                        consts = consts, 
@@ -802,32 +877,26 @@ rm(chains2LV.sc, chains2LV.sc2, chains2LV.r)
 
 ```
 
-
 ## Results
 
 <details><summary>First, we look at the mixing.</summary>
 Environment first:
 
-```{r results2, fig.height=10}
-chainsPlot(chains2LV, var = c("B"), legend = F, traceplot=F)
+```{r results2, fig.height=30}
+chainsPlot(chains2LV, var = "B", legend = F, ncols = 2)
 ```
 
 And the trait effects:
 
 ```{r ResO2LV, warning=FALSE,message=FALSE, fig.height=25}
-chainsPlot(chains2LV, var = c("O"), legend = F, traceplot=F)
-
+chainsPlot(chains2LV, var = "O", legend = F, ncols = 2)
 ```
 
 </details>
 
-
-<!-- The traceplots look good.  -->
+The LV-specific standard deviations gives an impression of relative importance of the latent variables;
 
 ```{r sum_stats}
-Ratio <- chains2LV$chain1[,"sd.LV[1]"]/chains2LV$chain1[,"sd.LV[2]"]
-Ratio.u <- HO.2LV$chain1[,"sd.LV[1]"]/HO.2LV$chain1[,"sd.LV[2]"]
-
 SDs <- summ.HO2LV$statistics[grep("sd", rownames(summ.HO2LV$statistic)),]
 rownames(SDs) <- c(paste0("Latent Variable ", 1:2),
               paste0("Site ", 1:2),
@@ -835,95 +904,32 @@ rownames(SDs) <- c(paste0("Latent Variable ", 1:2),
 knitr::kable(SDs, digits=2, format = "html", table.attr = "style='width:70%;'")
 ```
 
-What we are really interested in, is looking at the environment-trait interactions. We can plot those with the following code.
+we see that the first latent variable explains about twice as much variation than the second. We can also present this as a ratio:
 
-```{r EnvTraitInt}
-# Function to get MCMC results for reduced-rank approximated interaction term
-getMCMCInt <- function(mcmc.lst, dat,...) {
-  int.mcmc <- lapply(mcmc.lst, function(mcmc){
-    inCoefs <- as.mcmc(t(apply(mcmc, 1, function(ch){
-    B <- ChainToMatrix(ch,"B")
-    O <- ChainToMatrix(ch,"O")  
-    SDs <- diag(ch[grep("sd.LV",gsub("\\s*\\[[^\\)]+\\]","",names(ch)))])
-    coefs <- B%*%SDs%*%t(O)
-    vec <- c(coefs)
-    names(vec) <- paste0(colnames(dat$X),":",rep(colnames(dat$TR),each=ncol(dat$X)))
-    vec
-    })))
-  }
-  )
-  as.mcmc.list(int.mcmc)
-}
+```{r ratio}
+Ratio <- as.mcmc.list(lapply(chains2LV,function(ch)as.mcmc(data.frame(ch=ch[,"sd.LV[2]"]/ch[,"sd.LV[1]"]))))
+chainsPlot(Ratio, legend=F)
+```
 
+However, What we are really interested in, is looking at the environment-trait interactions. We can plot those with the following code.
+
+```{r EnvTraitInt, cache = TRUE}
 intChains <- getMCMCInt(chains2LV, dat = dat)
 summ.EnvTraitInt <- summary(intChains)
 coefs <- matrix(summ.EnvTraitInt$statistics[,1], ncol = ncol(dat$TR), nrow=ncol(dat$X), dimnames = list(colnames(dat$X),colnames(dat$TR)))
+# This plotting code was retrieved from the gllvm vignette: https://cran.r-project.org/web/packages/gllvm/vignettes/vignette1.html
 a <- 0.2
 colort <- colorRampPalette(c("blue", "white", "red"))
-lattice::levelplot(coefs, xlab = "Environmental Variables", 
+levelplot(coefs, xlab = "Environmental Variables", 
                       ylab = "Species traits", col.regions = colort(100), cex.lab = 1.3, 
                       at = seq(-a, a, length = 100), scales = list(x = list(rot = 45)))
 ```
 
+From which we can see that Moisture, elevation, and management have the most pronounced effects; the variables that are included in the analysis of this dataset by Niku *et al* (2021).
 
 Now, we can make two-dimensional ordination plots of sites and species, with their predictor effects. Note that these have been rotated, so that most ofthe variance should be on the first axis.
 
-<details><summary>We need a function to plot the arrows, which is hidden here</summary>
-```{r AddArrows}
-AddArrows <- function(coords, marg= par("usr"), col=2) {
-  origin <- c(mean(marg[1:2]), mean(marg[3:4]))
-  Xlength <- sum(abs(marg[1:2]))/2
-  Ylength <- sum(abs(marg[3:4]))/2
-  ends <- coords / max(abs(coords)) * min(Xlength, Ylength) * .8
-  arrows(
-    x0 = origin[1],
-    y0 = origin[2],
-    x1 = ends[,
-              1] + origin[1],
-    y1 = ends[, 2] + origin[2],
-    col = col,
-    length = 0.1)
-  text(
-    x = origin[1] + ends[, 1] * 1.1,
-    y = origin[2] + ends[, 2] * 1.1,
-    labels = rownames(coords),
-    col = col)
-  
-}
-
-```
-</details>
-
-
 ```{r results2_site, warning=FALSE, fig.height=9}
-
-ExtractMeans <- function(mcmc.lst, name=NULL) { # this needs defensive programming
-  if(is.null(name)) {
-    ind <- 1:nrow(mcmc.lst$statistics)
-  } else {
-    ind <- grep(name, rownames(mcmc.lst$statistics))
-  }
-  Means <- mcmc.lst$statistics[ind,"Mean"]
-  if(any(grep(",", names(Means)))) {
-    Col <- gsub("]", "", unique(gsub(".*, ", "", names(Means))))
-    res <- sapply(Col, function(cc, mn) {
-      mn[grep(paste0(cc,"]"), names(mn))]
-    }, Means)
-  } else {
-    res <- Means
-  }
-  res
-}
-GetMeans <- function(summ, name, d=1) {
-  if(is.null(d)) d <- 1
-  var <- summ$statistics[grep(paste0('^', name), rownames(summ$statistics)),"Mean"]
-  matrix(var,ncol=d)
-}
-
-
-# LVMeans <- ExtractMeans(LVs, name = "^LV\\[")
-# gammaMeans <- ExtractMeans(gamma, name="^gamma")
-
 z.m <- GetMeans(summ.HO2LV, name="^z", d=consts$nLVs)
 gamma.m <- GetMeans(summ.HO2LV, name="^gamma", d=consts$nLVs)
 vareps.m <- GetMeans(summ.HO2LV, name="^varepsilon", d=consts$nLVs)
@@ -945,14 +951,7 @@ text(gamma.m,labels=vegan::make.cepnames(colnames(Y)))
 AddArrows(marg = par("usr"), coords=O.m, col="blue")
 ```
 
-
 We can see that almost all of the environmental effects seem to act in the same way, mainly on LV1.
-
-We can also look at some summary statistics for the scale parameters of the latent variables, species-specific residuals and site-specific residuals, respectively:
-
-\Large **INSERT INFO**
-
-These tell us how well the predictors explain the ordination; the species- and site-specific scale parameters would be zero if the predictors fully explained the ordination. The scale parameters for the latent variables are similar to singular values (the square root of eigenvalues) in a classical ordination; they reflect a dimension its importance to the response.
 
 ## Residual covariance matrix
 
