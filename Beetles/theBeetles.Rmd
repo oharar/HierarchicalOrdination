@@ -21,9 +21,7 @@ The abundances, traits and environment are each stored in a different matrix. Fi
 ```{r data, cache=TRUE, message=FALSE}
 library(nimble)
 library(nimbleHMC)
-library(mvabund)
 library(coda)
-library(gllvm)
 library(lattice)
 
 # Response data
@@ -42,10 +40,14 @@ X$Texture <- as.factor(X$Texture)
 TR  <- read.csv("Beetles/TR.csv")
 row.names(TR) <- TR$SPECIES
 TR <- TR[,-c(1:3)]
+# Traits to categorical
+TR[,c("CLG","CLB","WIN","PRS","OVE","FOA","DAY","BRE","EME","ACT")] <- apply(TR[,c("CLG","CLB","WIN","PRS","OVE","FOA","DAY","BRE","EME","ACT")],2,as.factor)
 
 # Data standardization
 X <- scale(model.matrix(~.,X))[,-1] # environmental variables
 TR <- scale(model.matrix(~.,TR))[,-1] # species traits
+# Remove some categorical "traits" that only have one or two observations
+TR <- TR[,!colnames(TR)%in%c("OVE2?","ACT2?")]
 
 # Constants
 NSites <- nrow(Y) # number of sites
@@ -514,7 +516,6 @@ AddArrows <- function(coords, marg= par("usr"), col=2) {
     labels = rownames(coords),
     col = col)
 }
-
 ```
 </details>
 
@@ -676,14 +677,12 @@ First the environmental effects:
 ```{r results1, warning=FALSE, message=FALSE, fig.height = 30}
 library(basicMCMCplots)
 chainsPlot(chains, var = "B", legend = F)
-
 ```
 
 Then the trait effects:
 
 ```{r ResO, warning=FALSE, message=FALSE, fig.height = 30}
 chainsPlot(chains, var = "O", legend = F)
-
 ```
 
 </details>
@@ -713,7 +712,6 @@ We can also calculate the full distributions of site and species scores, and plo
 par(mfrow = c(2, 1), mar = c(2, 12, 4, 1))
 PlotPost("^z", summ = summ.HO, varnames = NULL, ylab = "", xlab = "Latent variable 1", main = "Sites")
 PlotPost("^gamma", summ = summ.HO, varnames = NULL, ylab = "", xlab = "Latent variable 1", main = "Species")
-
 ```
 
 ## More dimensions
@@ -853,7 +851,11 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
                        Nburn = 1e3, NIter = 5e3, Nthin = 1, # for a full run
                        consts = consts, 
                        block = MakeBlockList(consts, LVwise=TRUE), RW = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers))
+```
 
+and do the post-processing with functions previously defined:
+
+```{r mcmc2_process}
 # Re-scale gamma so that its scale is absorbed by LVsd
 chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
                               SDTorescale = c("sd.LV", "sd.Species"), 
@@ -874,7 +876,6 @@ chains2LV <- postProcess(chains2LV.r, VarsToProcess = VarsToProcess, VarsToSwapB
 summ.HO2LV <- summary(chains2LV)
 
 rm(chains2LV.sc, chains2LV.sc2, chains2LV.r)
-
 ```
 
 ## Results
@@ -888,7 +889,7 @@ chainsPlot(chains2LV, var = "B", legend = F, ncols = 2)
 
 And the trait effects:
 
-```{r ResO2LV, warning=FALSE,message=FALSE, fig.height=25}
+```{r ResO2LV, warning=FALSE,message=FALSE, fig.height=30}
 chainsPlot(chains2LV, var = "O", legend = F, ncols = 2)
 ```
 
@@ -910,6 +911,16 @@ we see that the first latent variable explains about twice as much variation tha
 Ratio <- as.mcmc.list(lapply(chains2LV,function(ch)as.mcmc(data.frame(ch=ch[,"sd.LV[2]"]/ch[,"sd.LV[1]"]))))
 chainsPlot(Ratio, legend=F)
 ```
+
+Again we examine the predictor effects in a caterpillar plot to spot non-zero predictor effects:
+
+```{r pred.eff, fig.height=15}
+par(mar=c(5, 10, 4, 2) + 0.1)
+PlotPost("B",summ.HO2LV,varnames = paste(rep(colnames(X),2), rep(paste0("LV.",1:2),each=ncol(X)), sep = "-"), xlab="Predictor effect", ylab=NA)
+PlotPost("O",summ.HO2LV,varnames = paste(rep(colnames(TR),2), rep(paste0("LV.",1:2),each=ncol(TR)), sep = "-"), xlab="Predictor effect", ylab=NA)
+```
+
+From which we see that there are various non-zero effects for the environmental effects, but that generally the trait effects are still too uncertain to draw any conclusions.
 
 However, What we are really interested in, is looking at the environment-trait interactions. We can plot those with the following code.
 
