@@ -465,7 +465,7 @@ RescaleVars <- function(vec, ScaleBy, SDTorescale, ToRescale) {
   }
   for(nm in SDTorescale) {
     SD.x <- vec[grep(paste0("^", nm, "\\["), names(vec))]
-    vec2[grep(paste0("^", nm, "\\["), names(vec2))] <- SD.x*SD
+    vec2[grep(paste0("^", nm, "\\["), names(vec2))] <- SD.x/SD
   }
   vec2
 }
@@ -856,17 +856,20 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
 and do the post-processing with functions previously defined:
 
 ```{r mcmc2_process}
-# Re-scale gamma so that its scale is absorbed by LVsd
+# sd.LV does not need to be rescaled, since it is estimated for var(gamma) = var(z) = 1 in the nimble code
+# Re-scale gamma
 chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
-                              SDTorescale = c("sd.LV", "sd.Species"), 
+                              SDTorescale = c("sd.Species"),
                               ToRescale = c("gamma",  "O", "varepsilon"))
 
-# Re-scale Z so that its scale is absorbed by LVsd
+# Re-scale Z
 chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy = "z", 
-                              SDTorescale = c("sd.LV", "sd.Site"), 
+                              SDTorescale = c("sd.Site"), 
                               ToRescale = c("z",  "B", "epsilon"))
 
 # Now rotate based on Z*Sigma and return its scale as LVsd.
+# Note that rotation can lead to non-diagonal sd.Site and sd.Species
+# But off-diagonals are not currently returned
 chains2LV.r <- RotateChains(chains2LV.sc2, rotation.fn = "svd", scale = T)
 
 # post-process chains for sign-swapping
