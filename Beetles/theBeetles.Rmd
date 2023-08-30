@@ -511,8 +511,8 @@ AddArrows <- function(coords, marg= par("usr"), col=2) {
     col = col,
     length = 0.1)
   text(
-    x = origin[1] + ends[, 1] * 1.1,
-    y = origin[2] + ends[, 2] * 1.1,
+    x = origin[1] + ends[, 1] * 1.2,
+    y = origin[2] + ends[, 2] * 1.2,
     labels = rownames(coords),
     col = col)
 }
@@ -943,7 +943,7 @@ From which we can see that Moisture, elevation, and management have the most pro
 
 Now, we can make two-dimensional ordination plots of sites and species, with their predictor effects. Note that these have been rotated, so that most ofthe variance should be on the first axis.
 
-```{r results2_site, warning=FALSE, fig.height=9}
+```{r results2_site, warning=FALSE, fig.height=12,cache=F}
 z.m <- GetMeans(summ.HO2LV, name="^z", d=consts$nLVs)
 gamma.m <- GetMeans(summ.HO2LV, name="^gamma", d=consts$nLVs)
 vareps.m <- GetMeans(summ.HO2LV, name="^varepsilon", d=consts$nLVs)
@@ -965,7 +965,7 @@ text(gamma.m,labels=vegan::make.cepnames(colnames(Y)))
 AddArrows(marg = par("usr"), coords=O.m, col="blue")
 ```
 
-We can see that almost all of the environmental effects seem to act in the same way, mainly on LV1.
+We can see that almost all of the environmental effects seem to act in the same way, mainly on LV1. It is useful to note that the direction of the interaction effect for the environment and traits can be read out of the ordination plot. If the resulting interaction is negative, the environment and trait arrow point in opposite directions. Likewise, if the resulting interaction is positive, the arrows point in the same direction.
 
 ## Residual covariance matrix
 
