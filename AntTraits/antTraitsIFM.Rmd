@@ -107,7 +107,7 @@ We fit the model with the *Nimble* *R*-package. We start with a single dimension
 # parameters that are not in "block" or "slice" are HMCed
 # Function to run a single chain
 RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL, 
-                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, slice = NULL, model = NULL, ...) {
+                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, slice = NULL, ...) {
   require(nimble)
   require(nimbleHMC)
   AllSamplers <- HMCsamplers <- c('epsilonSTAR', 'varepsilonSTAR', 'beta0', 'OSTAR', 'BSTAR',
@@ -120,7 +120,8 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
     ToMonitor <- c("beta0", "sd.Species", "sd.Site", "sd.LV", "B", "O", 
                    "epsilon", "varepsilon", "gamma", "z", "xi")
   }
-  model$setInits(inits(consts))
+  mod <- nimbleModel(code = code, name = "HO", inits = inits(consts), constants = consts, data = dat, buildDerivs = TRUE)
+    model <- compileNimble(mod)
   
   # Do HMC
     conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
@@ -161,12 +162,11 @@ ParaNimble <- function(NChains, ...) {
   }else{
     seeds <- 1:NChains
   }
-    mod <- nimbleModel(code = opts$code, name = "HO", constants = opts$consts, data = opts$dat, buildDerivs = TRUE)
-    model <- compileNimble(mod)
+
   require(parallel)
   nimble_cluster <- makeCluster(NChains)
   
-  samples <- parLapply(cl = nimble_cluster, X = seeds, model = model, ...)
+  samples <- parLapply(cl = nimble_cluster, X = seeds, ...)
   stopCluster(nimble_cluster)
 
   # Name the chains in the list
