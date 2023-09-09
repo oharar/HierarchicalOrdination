@@ -143,7 +143,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   
   # Do HMC
     conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
-                         control=list(nwarmup=Nburn, kappa = 0.95, maxTreeDepth = 30))
+                         control=list(nwarmup=Nburn))
     if(!is.null(block)) { 
     if(is.list(block)){
     # Use a slice everything that not being HMCed
@@ -257,7 +257,7 @@ ReSignChain <- function(chain, varinds, vartosign) {
 }
 
 # Function to post-process chains to swap signs.
-postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NULL, print=FALSE) {
+postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NULL, print=FALSE, rule = 2) {
   if(is.null(VarToSign)) VarToSign <- VarsToProcess
   SignInd <- GetInds(VarToSign, colnames(Chains[[1]]))
   # Get indicators for all variables to have their signs changed
@@ -265,13 +265,16 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
   
   # Check if > 1 LV
   SeveralLVs <- any(grepl(",", colnames(Chains[[1]])[SignInd]))
+  LV <- gsub(".*, ", "", colnames(Chains[[1]])[SignInd])
   
+  if(rule==1){
   # Calculate variance of mean of indicator of sign: 
-  #    hopefully largest is variable with most sign swapping (i.e. )
+  # hopefully largest is variable with most sign swapping (i.e. )
   Signs <- as.data.frame(lapply(Chains, function(mat, ind) {
     colMeans(mat[,ind]>0)
   }, ind=SignInd))
-    VarSign <- apply(Signs, 1, var)
+  
+  VarSign <- apply(Signs, 1, var)
   
   if(SeveralLVs) {
     LV <- gsub(".*, ", "", colnames(Chains[[1]])[SignInd])
@@ -284,18 +287,33 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
       nm
     }, vs = VarSign, simplify = TRUE)
     }
-    if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
-    chains.sgn <- lapply(Chains, ReSignChain, vartosign=VarsToSwapBy, varinds=ProcessInds)
     
   } else { # only 1 LV
     if(is.null(VarsToSwapBy)){
     #Chose variables who's sign will be used to swap other signs
     VarsToSwapBy <- names(which(VarSign==max(VarSign)))[1]
     }
-    if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
-#    chains.sgn <- lapply(Chains, ReSignChain, varNames=VarsToProcess, sign.var=ind)
-    chains.sgn <- lapply(Chains, ReSignChain, vartosign=VarsToSwapBy, varinds=ProcessInds)
   }
+  
+  }else if(rule==2){
+    require(MCMCglmm)
+    require(mousetrap)
+    
+    psMode<-lapply(Chains, function(ch)posterior.mode(ch))
+    jointChains <- do.call(rbind, Chains)
+    # bimodality score
+    bms<-apply(jointChains[,SignInd],2,bimodality_coefficient)
+    # find maximum bimodality score
+    lstSgn <- sapply(unique(LV),function(lv)which.max(bms[grep(lv,names(bms))]),simplify=F)
+    # formatting
+    names(lstSgn) <- NULL
+    VarsToSwapBy <- names(unlist(lstSgn))
+    names(VarsToSwapBy) <- paste0(sort(unique(LV)))
+  }
+  
+  if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
+  chains.sgn <- lapply(Chains, ReSignChain, vartosign=VarsToSwapBy, varinds=ProcessInds)
+
   as.mcmc.list(chains.sgn)
 }
 

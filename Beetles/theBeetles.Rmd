@@ -176,14 +176,14 @@ inits2 <- function(consts){
 ```{r MCMCFunc}
 # Function to run a single chain
 RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL, 
-                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, RW = NULL, ...) {
+                        Nburn=5e3, NIter=5.5e4, Nthin=10, block = NULL, slice = NULL, ...) {
   require(nimble)
   require(nimbleHMC)
   AllSamplers <- HMCsamplers <- c('epsilonSTAR', 'varepsilonSTAR', 'beta0', 'OSTAR', 'BSTAR',
                   'sd.Site', 'sd.Species', 'sd.LV','phi')
   
   if(!is.null(block)){
-  HMCsamplers <- HMCsamplers[!HMCsamplers%in%unique(gsub("\\s*\\[[^\\)]+\\]","",c(unlist(block),unlist(RW))))]
+  HMCsamplers <- HMCsamplers[!HMCsamplers%in%unique(gsub("\\s*\\[[^\\)]+\\]","",c(unlist(block),unlist(slice))))]
   }
   if(is.null(ToMonitor)) {
     ToMonitor <- c("beta0", "sd.Species", "sd.Site", "sd.LV", "B", "O", 
@@ -195,7 +195,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   
   # Do HMC
     conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
-                         control=list(nwarmup=Nburn, kappa = 0.95, maxTreeDepth = 30))
+                         control=list(nwarmup=Nburn))
     if(!is.null(block)) { 
     if(is.list(block)){
     # Use a slice everything that not being HMCed
@@ -206,13 +206,13 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
     }
     }
     
-    if(!is.null(RW)) { 
-    if(is.list(RW)){
+    if(!is.null(slice)) { 
+    if(is.list(slice)){
     # Use a slice everything that not being HMCed
-      lapply(RW, conf$addSampler, type = "RW")
+      lapply(slice, conf$addSampler, type = "slice")
     }else{
       # Use a slice everything that not being HMCed
-      sapply(RW, conf$addSampler, type = "RW")
+      sapply(slice, conf$addSampler, type = "slice")
     }
     }
     
@@ -452,8 +452,11 @@ RotateChains <- function(mcmc.lst, RotateBy="z", SDby = "sd.LV",
   as.mcmc.list(rotated)
 }
 
-RescaleVars <- function(vec, ScaleBy, SDTorescale, ToRescale) {
+RescaleVars <- function(vec, ScaleBy, SDTorescale,ToRescale) {
+  if(!any(c("z","gamma")%in%ScaleBy))stop("Not a valid choice.")
+  if("sd.LV"%in%SDTorescale)stop("Not a valid choice.")
   vec2 <- vec
+  # get scale from z or gamma
   ScBy <- ChainToMatrix(vec, ScaleBy)
   SD <- apply(ScBy, 2, sd)
   
@@ -462,10 +465,17 @@ RescaleVars <- function(vec, ScaleBy, SDTorescale, ToRescale) {
       Sc.x.sc <- sweep(Sc.x, 2, SD, "/")
       vec2[grep(paste0("^", nm, "\\["), names(vec2))] <- c(Sc.x.sc)
   }
+
+  # scale sd separately
   for(nm in SDTorescale) {
     SD.x <- vec[grep(paste0("^", nm, "\\["), names(vec))]
     vec2[grep(paste0("^", nm, "\\["), names(vec2))] <- SD.x/SD
   }
+  
+  # scale into sd.LV
+  # sd.LV <- vec[grep("sd.LV", names(vec))]
+  # vec2[grep("sd.LV", names(vec2))] <- SD*sd.LV
+  
   vec2
 }
 
@@ -496,7 +506,7 @@ PlotPost <- function(var, summ, varnames=NULL, ...) {
   axis(2, at=1:length(vars), labels=varnames, las=1)
 }
 
-AddArrows <- function(coords, marg= par("usr"), col=2) {
+AddArrows <- function(coords, marg= par("usr"), col=2, ...) {
   origin <- c(mean(marg[1:2]), mean(marg[3:4]))
   Xlength <- sum(abs(marg[1:2]))/2
   Ylength <- sum(abs(marg[3:4]))/2
@@ -508,12 +518,12 @@ AddArrows <- function(coords, marg= par("usr"), col=2) {
               1] + origin[1],
     y1 = ends[, 2] + origin[2],
     col = col,
-    length = 0.1)
+    length = 0.1, ...)
   text(
     x = origin[1] + ends[, 1] * 1.2,
     y = origin[2] + ends[, 2] * 1.2,
     labels = rownames(coords),
-    col = col)
+    col = col, ...)
 }
 ```
 </details>
@@ -654,7 +664,7 @@ chains.unsgn <- ParaNimble(4, fun = RunOneChain,
 #                       Nburn = 5e1, NIter = 5.5e2, Nthin = 1, # for a small run
                        Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
                        consts = consts, 
-                       block = MakeBlockList(consts, LVwise = TRUE), RW = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers)
+                       block = MakeBlockList(consts, LVwise = TRUE), slice = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers)
 
 # post-process chains for sign-swapping
 VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
@@ -849,7 +859,7 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
 #                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
                        Nburn = 1e3, NIter = 5e3, Nthin = 1, # for a full run
                        consts = consts, 
-                       block = MakeBlockList(consts, LVwise=TRUE), RW = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers))
+                       block = MakeBlockList(consts, LVwise=TRUE), slice = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers))
 ```
 
 and do the post-processing with functions previously defined:
@@ -857,7 +867,7 @@ and do the post-processing with functions previously defined:
 ```{r mcmc2_process}
 # sd.LV does not need to be rescaled, since it is estimated for var(gamma) = var(z) = 1 in the nimble code
 # Re-scale gamma
-chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
+chains2LV.sc <- RescaleChains(HO2.LV, ScaleBy = "gamma", 
                               SDTorescale = c("sd.Species"),
                               ToRescale = c("gamma",  "O", "varepsilon"))
 

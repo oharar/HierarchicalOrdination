@@ -125,7 +125,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   
   # Do HMC
     conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
-                         control=list(nwarmup=Nburn, kappa = 0.95, maxTreeDepth = 30))
+                         control=list(nwarmup=Nburn))
     if(!is.null(block)) { 
     if(is.list(block)){
     # Use a slice everything that not being HMCed
@@ -282,7 +282,7 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
     require(mousetrap)
     
     psMode<-lapply(Chains, function(ch)posterior.mode(ch))
-    jointChains <- do.call(cbind, Chains)
+    jointChains <- do.call(rbind, Chains)
     # bimodality score
     bms<-apply(jointChains[,SignInd],2,bimodality_coefficient)
     # find maximum bimodality score
@@ -567,7 +567,7 @@ HO.nim <- nimbleCode({
 
   xi[1] ~ dgamma(5,2)
   for(l in 2:nLVs) {
-  xi[l] ~ dbeta(5, 5)#NSpecies/(2*l+NSpecies), l^2) #dbeta(1,20)# could instead be dunif(0,1) to be less informative
+  xi[l] ~ dbeta(1, 10)#NSpecies/(2*l+NSpecies), l^2) #dbeta(1,20)# could instead be dunif(0,1) to be less informative
   }
   
   diagNTraits[1:NTraits,1:NTraits] <- diag(NTraits)
@@ -575,8 +575,8 @@ HO.nim <- nimbleCode({
   zeroNTraits[1:NTraits] <- rep(0, NTraits)
   zeroNEnv[1:NEnv] <- rep(0, NEnv)
     for(l in 1:nLVs) { 
-      OSTAR[1:NTraits,l] ~dmnorm(zeroNTraits[1:NTraits], prec = diagNTraits[1:NTraits,1:NTraits]) 
-      BSTAR[1:NEnv,l] ~dmnorm(zeroNEnv[1:NEnv], prec = diagNEnv[1:NEnv,1:NEnv]) 
+      OSTAR[1:NTraits,l] ~ dmnorm(zeroNTraits[1:NTraits], prec = diagNTraits[1:NTraits,1:NTraits]) 
+      BSTAR[1:NEnv,l] ~ dmnorm(zeroNEnv[1:NEnv], prec = diagNEnv[1:NEnv,1:NEnv]) 
     
     ## standardizing z and gamma
     ## not mean centering
