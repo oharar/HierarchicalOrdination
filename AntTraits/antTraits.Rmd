@@ -130,12 +130,10 @@ OneLV.nim <- nimbleCode({
   
 # Here we standardise z and gamma, so the both have a variance of 1.
 #   The standard deviation of the latent variable is sd.LV.
-    zmu <- mean(zSTAR[1:NSites])
-    gammamu<- mean(gammaSTAR[1:NSpecies])
-    StdDev.z <- sqrt(mean((zSTAR[1:NSites] - zmu)^2))
-    StdDev.gamma <- sqrt(mean((gammaSTAR[1:NSpecies] - gammamu)^2)) 
-    z[1:NSites] <- (zSTAR[1:NSites]-zmu)/StdDev.z
-    gamma[1:NSpecies] <- (gammaSTAR[1:NSpecies]-gammamu)/StdDev.gamma
+    StdDev.z <- sd(zSTAR[1:NSites])
+    StdDev.gamma <- sd(gammaSTAR[1:NSpecies])
+    z[1:NSites] <- zSTAR[1:NSites]/StdDev.z
+    gamma[1:NSpecies] <- gammaSTAR[1:NSpecies]/StdDev.gamma
     
 # Scale other parameters
     epsilon[1:NSites] <- epsilonSTAR[1:NSites]/StdDev.z
@@ -258,7 +256,6 @@ ParaNimble <- function(NChains, ...) {
 }
 
 # Function to create list of names for parameters to use a block slice sampler for
-
 MakeBlockList <- function(consts, LVwise = TRUE){
 # builds list for slice AF sampling
 # with LVwise = TRUE we are LV-wise blocking B and epsilon, and O and varepsilon
@@ -280,9 +277,10 @@ blockList <- c(sapply(1:consts$nLVs,
          consts = consts,simplify=F)
        )
 if(consts$nLVs>1){
-# remove entries of BSTAR that are fixed
+# remove entries of B,O-STAR that are fixed
 for(q in 2:consts$nLVs){
   blockList[[q]] <- blockList[[q]][-(1:(q-1))]
+  blockList[-c(1:consts$nLVs)][[q]] <- blockList[-c(1:consts$nLVs)][[q]][-(1:(q-1))]
 }
 }
 }else{
@@ -290,6 +288,7 @@ for(q in 2:consts$nLVs){
 }
 blockList
 }
+
 ```
 
 </details>
@@ -373,19 +372,24 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
   }
   
   }else if(rule==2){
-    require(MCMCglmm)
     require(mousetrap)
     
-    psMode<-lapply(Chains, function(ch)posterior.mode(ch))
-    jointChains <- do.call(cbind, Chains)
+    jointChains <- do.call(rbind, Chains)
     # bimodality score
-    bms<-apply(jointChains[,ind],2,bimodality_coefficient)
+    bms<-apply(jointChains[,SignInd],2,bimodality_coefficient)
     # find maximum bimodality score
+    if(SeveralLVs){
     lstSgn <- sapply(unique(LV),function(lv)which.max(bms[grep(lv,names(bms))]),simplify=F)
     # formatting
     names(lstSgn) <- NULL
     VarsToSwapBy <- names(unlist(lstSgn))
     names(VarsToSwapBy) <- paste0(sort(unique(LV)))
+    }else{
+    lstSgn <- which.max(bms)
+    # formatting
+    VarsToSwapBy <- names(lstSgn)
+    names(VarsToSwapBy) <- "1]"
+    }
   }
   
   if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
@@ -393,7 +397,6 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
 
   as.mcmc.list(chains.sgn)
 }
-
 ```
 
 </details>
@@ -409,14 +412,16 @@ chains.unsgn <- ParaNimble(4, fun = RunOneChain,
                        Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
                        consts = consts, 
                        block = MakeBlockList(consts), slice = paste0("beta0[",1:consts$NSpecies,"]")) # HMC on the rest (hypers)
-
+```
+```{r MCMCrun_process, message=FALSE}
 # post-process chains for sign-swapping
 VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
 VarsToSign <- c("^B")
 chains <- postProcess(chains.unsgn, VarsToProcess = VarsToProcess, 
-                      VarToSign = VarsToSign, print = TRUE, VarsToSwapBy = "B[2]")
+                      VarToSign = VarsToSign, print = TRUE, rule = 2)#, VarsToSwapBy = "B[2]")
 summ.HO = summary(chains)
 ```
+
 
 ### Results
 
@@ -545,21 +550,16 @@ HO.nim <- nimbleCode({
     OSTAR[l,l] ~ dnorm(0,sd=1)
 
     ## standardizing z and gamma
-    zmu[l] <- mean(zSTAR[1:NSites,l])
-    StdDev.z[l] <- sqrt(mean((zSTAR[1:NSites,l] - zmu[l])^2))
-    z[1:NSites,l] <- (zSTAR[1:NSites,l]-zmu[l])/StdDev.z[l]
+    StdDev.z[l] <- sd(zSTAR[1:NSites,l])
+    z[1:NSites,l] <- zSTAR[1:NSites,l]/StdDev.z[l]
     
-    gammamu[l] <- mean(gammaSTAR[1:NSpecies,l])
-    StdDev.gamma[l] <- sqrt(mean((gammaSTAR[1:NSpecies,l] - gammamu[l])^2)) 
-    gamma[1:NSpecies,l] <- (gammaSTAR[1:NSpecies,l]-gammamu[l])/StdDev.gamma[l]
+    StdDev.gamma[l] <- sd(gammaSTAR[1:NSpecies,l])
+    gamma[1:NSpecies,l] <- gammaSTAR[1:NSpecies,l]/StdDev.gamma[l]
     
   # Scale other parameters
-    epsmu[l] <- mean(epsilonSTAR[1:NSites,l])
-    varepsmu[l] <- mean(varepsilonSTAR[1:NSpecies,l])
-    
-    epsilon[1:NSites,l] <- (epsilonSTAR[1:NSites,l]-epsmu[l])/StdDev.z[l]
+    epsilon[1:NSites,l] <- epsilonSTAR[1:NSites,l]/StdDev.z[l]
     B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
-    varepsilon[1:NSpecies,l] <- (varepsilonSTAR[1:NSpecies,l]-varepsmu[l])/StdDev.gamma[l]
+    varepsilon[1:NSpecies,l] <- varepsilonSTAR[1:NSpecies,l]/StdDev.gamma[l]
     O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
   
     # priors for scales
@@ -593,30 +593,11 @@ HO.nim <- nimbleCode({
 <details><summary>We create a new function to simulate starting values from the prior distributions, which we can hide away</summary>
 
 ```{r init2}
-# inits <- function(consts, dat, seed){
-#   start.fit <- gllvm::gllvm(dat$Y, X=dat$X, num.lv.c = consts$nLVs, family = "poisson", seed = seed, sd.errors = FALSE)
-#   qrB <- qr(t(start.fit$params$LvXcoef)) # Rotate to B[1,2]=0
-#   B = t(qr.R(qr(t(start.fit$params$LvXcoef))))
-#   start.fit$params$theta <- start.fit$params$theta%*%qr.Q(qrB)
-#   mod.TR <- lm(start.fit$params$theta~0+dat$TR)
-#   O = coef(mod.TR)
-#   varepsilon = residuals(mod.TR)
-#   epsilon = start.fit$lvs%*%qr.Q(qrB)
-#   list(
-#     BSTAR = B,
-#     OSTAR = O,
-#     epsilonSTAR = epsilon,
-#     varepsilonSTAR = varepsilon,
-#     sd.Site = start.fit$params$sigma.lv,
-#     sd.Species = rexp(consts$nLVs),
-#     beta0 = rnorm(consts$NSpecies),
-#     sd.LV = rexp(consts$nLVs)
-#   )
-# }
 inits <- function(consts){
     B = matrix(rnorm(consts$nLVs*consts$NEnv),ncol=consts$nLVs)
     B[upper.tri(B)] = 0
     O = matrix(rnorm(consts$nLVs*consts$NTraits),nrow=consts$NTraits)
+    O[upper.tri(O)] = 0
     varepsilon = mvtnorm::rmvnorm(consts$NSpecies,rep(0,consts$nLVs),diag(consts$nLVs))
     epsilon = mvtnorm::rmvnorm(consts$NSites,rep(0,consts$nLVs),diag(consts$nLVs))
     list(
@@ -729,12 +710,12 @@ rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotati
   # Retrieve correct scale of LVs
   if(scale){
     #also need to put LVs into here
-    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(loadings.r$loadings)
-    ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")
+    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(loadings.r$loadings, center = F)
+    ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings, center = F),"scaled:scale")
   } else{
    # if LVs are not scaled by LV sds, we just add the new LV scale to LVs SDs.
-     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- scale(loadings.r$loadings)
-     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")*SDs
+     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- scale(loadings.r$loadings, center = F)
+     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings, center = F),"scaled:scale")*SDs
   }
 
   # Rotate rest of the variables
@@ -809,7 +790,9 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
 #                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
                        Nburn = 1000, NIter = 4e3, Nthin = 1, # for a full run
                        consts = consts)
+```
 
+```{r mcmc2_process}
 # Re-scale gamma
 chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
                               SDTorescale = c("sd.Species"),
