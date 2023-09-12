@@ -309,7 +309,7 @@ ReSignChain <- function(chain, varinds, vartosign) {
 }
 
 # Function to post-process chains to swap signs.
-postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NULL, print=FALSE) {
+postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NULL, print=FALSE, rule = 2) {
   if(is.null(VarToSign)) VarToSign <- VarsToProcess
   SignInd <- GetInds(VarToSign, colnames(Chains[[1]]))
   # Get indicators for all variables to have their signs changed
@@ -317,13 +317,16 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
   
   # Check if > 1 LV
   SeveralLVs <- any(grepl(",", colnames(Chains[[1]])[SignInd]))
+  LV <- gsub(".*, ", "", colnames(Chains[[1]])[SignInd])
   
+  if(rule==1){
   # Calculate variance of mean of indicator of sign: 
-  #    hopefully largest is variable with most sign swapping (i.e. )
+  # hopefully largest is variable with most sign swapping (i.e. )
   Signs <- as.data.frame(lapply(Chains, function(mat, ind) {
     colMeans(mat[,ind]>0)
   }, ind=SignInd))
-    VarSign <- apply(Signs, 1, var)
+  
+  VarSign <- apply(Signs, 1, var)
   
   if(SeveralLVs) {
     LV <- gsub(".*, ", "", colnames(Chains[[1]])[SignInd])
@@ -336,18 +339,38 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
       nm
     }, vs = VarSign, simplify = TRUE)
     }
-    if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
-    chains.sgn <- lapply(Chains, ReSignChain, vartosign=VarsToSwapBy, varinds=ProcessInds)
     
   } else { # only 1 LV
     if(is.null(VarsToSwapBy)){
     #Chose variables who's sign will be used to swap other signs
     VarsToSwapBy <- names(which(VarSign==max(VarSign)))[1]
     }
-    if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
-#    chains.sgn <- lapply(Chains, ReSignChain, varNames=VarsToProcess, sign.var=ind)
-    chains.sgn <- lapply(Chains, ReSignChain, vartosign=VarsToSwapBy, varinds=ProcessInds)
   }
+  
+  }else if(rule==2){
+    require(mousetrap)
+    
+    jointChains <- do.call(rbind, Chains)
+    # bimodality score
+    bms<-apply(jointChains[,SignInd],2,bimodality_coefficient)
+    # find maximum bimodality score
+    if(SeveralLVs){
+    lstSgn <- sapply(unique(LV),function(lv)which.max(bms[grep(lv,names(bms))]),simplify=F)
+    # formatting
+    names(lstSgn) <- NULL
+    VarsToSwapBy <- names(unlist(lstSgn))
+    names(VarsToSwapBy) <- paste0(sort(unique(LV)))
+    }else{
+    lstSgn <- which.max(bms)
+    # formatting
+    VarsToSwapBy <- names(lstSgn)
+    names(VarsToSwapBy) <- "1]"
+    }
+  }
+  
+  if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
+  chains.sgn <- lapply(Chains, ReSignChain, vartosign=VarsToSwapBy, varinds=ProcessInds)
+
   as.mcmc.list(chains.sgn)
 }
 
@@ -358,9 +381,7 @@ ChainToMatrix <- function(ch, name) {
   l.row <- as.numeric(gsub(".*\\[", "", gsub(",.*", "", names(v))))
   l.col <- as.numeric(gsub(".*, ", "", gsub("\\]", "", names(v))))
   mat <- matrix(0, nrow=max(l.row), ncol=max(l.col))
-  for(i in seq_along(ch)) { # there must be a quicker way...
-    mat[l.row[i], l.col[i]] <- v[i]
-  }
+  mat[l.row+max(l.row)*(l.col-1)]<-v
   mat
 }
 
@@ -420,12 +441,12 @@ rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotati
   # Retrieve correct scale of LVs
   if(scale){
     #also need to put LVs into here
-    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(loadings.r$loadings)
-    ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")
+    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(loadings.r$loadings, center = F)
+    ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings, center = F),"scaled:scale")
   } else{
    # if LVs are not scaled by LV sds, we just add the new LV scale to LVs SDs.
-     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- scale(loadings.r$loadings)
-     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")*SDs
+     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- scale(loadings.r$loadings, center = F)
+     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings, center = F),"scaled:scale")*SDs
   }
 
   # Rotate rest of the variables
@@ -665,12 +686,13 @@ chains.unsgn <- ParaNimble(4, fun = RunOneChain,
                        Nburn = 1e3, NIter = 2e3, Nthin = 1, # for a big HMC run
                        consts = consts, 
                        block = MakeBlockList(consts, LVwise = TRUE), slice = c(paste0("beta0[",1:consts$NSpecies,"]"),paste0("phi[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers)
-
+```
+```{r MCMCprocess, message=FALSE}
 # post-process chains for sign-swapping
 VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
 VarsToSign <- c("^B")
 chains <- postProcess(chains.unsgn, VarsToProcess = VarsToProcess, 
-                      VarToSign = VarsToSign, print = TRUE, VarsToSwapBy = "B[26]")
+                      VarToSign = VarsToSign, print = TRUE, rule = 2)#, VarsToSwapBy = "B[26]")
 summ.HO = summary(chains)
 ```
 
@@ -776,21 +798,16 @@ HO.nim <- nimbleCode({
     OSTAR[l,l] ~ dnorm(0,sd=1)
 
     ## standardizing z and gamma
-    zmu[l] <- mean(zSTAR[1:NSites,l])
-    StdDev.z[l] <- sqrt(mean((zSTAR[1:NSites,l] - zmu[l])^2))
-    z[1:NSites,l] <- (zSTAR[1:NSites,l]-zmu[l])/StdDev.z[l]
+    StdDev.z[l] <- sd(zSTAR[1:NSites,l])
+    z[1:NSites,l] <- zSTAR[1:NSites,l]/StdDev.z[l]
     
-    gammamu[l] <- mean(gammaSTAR[1:NSpecies,l])
-    StdDev.gamma[l] <- sqrt(mean((gammaSTAR[1:NSpecies,l] - gammamu[l])^2)) 
-    gamma[1:NSpecies,l] <- (gammaSTAR[1:NSpecies,l]-gammamu[l])/StdDev.gamma[l]
+    StdDev.gamma[l] <- sd(gammaSTAR[1:NSpecies,l])
+    gamma[1:NSpecies,l] <- gammaSTAR[1:NSpecies,l]/StdDev.gamma[l]
     
     # Scale other parameters
-    epsmu[l] <- mean(epsilonSTAR[1:NSites,l])
-    varepsmu[l] <- mean(varepsilonSTAR[1:NSpecies,l])
-    
-    epsilon[1:NSites,l] <- (epsilonSTAR[1:NSites,l]-epsmu[l])/StdDev.z[l]
+    epsilon[1:NSites,l] <- epsilonSTAR[1:NSites,l]/StdDev.z[l]
     B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
-    varepsilon[1:NSpecies,l] <- (varepsilonSTAR[1:NSpecies,l]-varepsmu[l])/StdDev.gamma[l]
+    varepsilon[1:NSpecies,l] <- varepsilonSTAR[1:NSpecies,l]/StdDev.gamma[l]
     O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
   
     # priors for scales
@@ -882,7 +899,7 @@ chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy = "z",
 chains2LV.r <- RotateChains(chains2LV.sc2, rotation.fn = "svd", scale = T)
 
 # post-process chains for sign-swapping
-chains2LV <- postProcess(chains2LV.r, VarsToProcess = VarsToProcess, VarsToSwapBy = c("1]" = "B[26, 1]", "2]" = "B[22, 2]"), print = F)
+chains2LV <- postProcess(chains2LV.r, VarsToProcess = VarsToProcess, print = T, rule = 2)#, VarsToSwapBy = c("1]" = "B[26, 1]", "2]" = "B[22, 2]"), print = F)
 
 # Calculate summaries
 summ.HO2LV <- summary(chains2LV)

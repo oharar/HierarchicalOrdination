@@ -648,9 +648,7 @@ ChainToMatrix <- function(ch, name) {
   l.row <- as.numeric(gsub(".*\\[", "", gsub(",.*", "", names(v))))
   l.col <- as.numeric(gsub(".*, ", "", gsub("\\]", "", names(v))))
   mat <- matrix(0, nrow=max(l.row), ncol=max(l.col))
-  for(i in seq_along(ch)) { # there must be a quicker way...
-    mat[l.row[i], l.col[i]] <- v[i]
-  }
+  mat[l.row+max(l.row)*(l.col-1)]<-v
   mat
 }
 
