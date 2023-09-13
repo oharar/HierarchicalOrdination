@@ -884,7 +884,7 @@ and do the post-processing with functions previously defined:
 ```{r mcmc2_process}
 # sd.LV does not need to be rescaled, since it is estimated for var(gamma) = var(z) = 1 in the nimble code
 # Re-scale gamma
-chains2LV.sc <- RescaleChains(HO2.LV, ScaleBy = "gamma", 
+chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
                               SDTorescale = c("sd.Species"),
                               ToRescale = c("gamma",  "O", "varepsilon"))
 
