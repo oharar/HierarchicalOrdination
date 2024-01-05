@@ -6,3 +6,5 @@ Posts.pdf
 inst/doc
 /doc/
 /Meta/
+/*_cache/
+/*_files/

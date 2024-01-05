@@ -15,3 +15,4 @@ Beetles/beetles/theBeetlesIFM_cache/html/mcmc2_run_ff33ba7b626a6a8b1025f0f1447fd
 Beetles/beetles/theBeetlesIFM_cache/html/mcmc_code_274f676d52b7ace7e71c72c23678b945.rdb filter=lfs diff=lfs merge=lfs -text
 Beetles/beetles/theBeetlesIFM_cache/html/model2_code_999cf46dde671538fa0d0fc9f9baebe2.rdb filter=lfs diff=lfs merge=lfs -text
 Beetles/beetles/theBeetlesIFM_cache/html/plotEnv1LVfunction_4bb827183180898c89cb0e212ba11b04.rdb filter=lfs diff=lfs merge=lfs -text
+*.RData filter=lfs diff=lfs merge=lfs -text
