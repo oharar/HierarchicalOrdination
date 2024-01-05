@@ -1,6 +1,5 @@
 ---
 title: "Hierarchical Ordination, A unifying framework for drivers of community processes"
-subtitle: "(fourth) cornering the market in modelling communities"
 author: 
   - R.B. O'Hara$^{12}$
   - B. van der Veen$^{123}$
@@ -10,9 +9,20 @@ header-includes:
    -  \usepackage[left]{lineno}
    -  \usepackage{setspace}\doublespacing
    -  \linenumbers
+   - \usepackage{tikz}
+   - \usetikzlibrary{shapes,snakes}
+   - \tikzstyle{mybox} = [draw=gray, very thick, rectangle, rounded corners, inner sep=10pt, inner ysep=10pt]
+   - \tikzstyle{fancytitle} =[text=black]
+   - \usepackage{multicol}
 bibliography: references.bib
 biblio-style: methods-in-ecology-and-evolution.csl
 ---
+
+```{css, echo=FALSE}
+table, th, td {
+  border: 1px solid;
+}
+```
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -32,19 +42,17 @@ Community ecology is the study of groups of species. One important set of questi
 
 The methods we consider in this article assume that species are observed at a number of sites, so the data is a site by species matrix, with entries being a measure of abundance or incidence, e.g. whether a species was observed at that site, or the number of individuals observed. Historically, these data have been summarised by **ordination methods** [e.g. @Gower1966; @terBrakk1985], which look to reduce the variation in data to a small number (usually two) of dimensions. This means that sites and species can be plotted on an **ordination diagram**, which can be inspected visually [@gabrielBiplotGraphicDisplay1971]. More recently, approaches have been developed that are based on modern statistical modelling ideas, leading to the application of Generalised Linear Latent Variable Models in community ecology [@HuiGLLVMs2015;@skrondalGeneralizedLatentVariable2004].
 
-Species distribution model (SDMs) were developed, and the perceived importance of interactions between species [@Wisz2013; @Kissling2012] suggested that their distributions should be modelled jointly. This lead to the development of Joint Species Distribution Models [JSDMs: @Pollock2014], which model the response of each species to the environment and then add a correlation matrix to allow for additional covariance between species. It was quickly realised that this matrix becomes unmanageable for many species, as it has so many parameters to estimate. Thus, extensions were developed to model the matrix as the sum of a smaller set of linear effects [e.g. @Warton2015; @Ovaskainen2017]. Because these models are based on a formal probabilistic model (which can be written as a likelihood, and thus fitted to data with flexible statistical methods), they have been extended in a variety of directions (see below). 
+Species distribution model (SDMs) were developed to predict the incidence of species with environmental variables. The perceived importance of interactions between species [@Wisz2013; @Kissling2012] suggested that their distributions should be modelled jointly. This lead to the development of Joint Species Distribution Models [JSDMs: @Pollock2014], which model the response of each species to the environment and then add a correlation matrix to allow for additional covariance between species. It was quickly realised that this matrix becomes unmanageable for many species, as it has so many parameters to estimate. Thus, extensions were developed to model the matrix as the sum of a smaller set of linear effects [e.g. @Warton2015; @Ovaskainen2017]. Because these models are based on a formal probabilistic model (which can be written as a likelihood, and thus fitted to data with flexible statistical methods), they have been extended in a variety of directions (see below). 
 
-(ordination -> inference, JSDMs -> prediction)
+The differences in the ways that ordination and JSDMs have been used largely revolve around the aims of the data collection and analysis. Ordination has typically been used for small scale field studies that describe the differences between communities they have sampled at different sites or times, and possibly look at how these differences are related to environmental variables [e.g. such as @bray1957ordination]. Thus the focus has been on exploration of the relationships between species and communities. In contrast, JSDMs were developed by and for macro-ecologists, wanting to look at the distributions of species over their whole range, with the primary aim of estimating the effects of environmental covariates on the distribution of species, and thus being able to predict theie current and future distributions [@clark2014more]. The role of the residual correlation was to improve the predictions, rather than be interpretable: problems with interpreting the correlations as interactions between species were pointed out early on [@Pollock2014].
 
-The differences in the ways that ordination and JSDMs have been used largely revolve around the aims of the data collection and analysis. Ordination has typically been used for small scale field studies that describe the differences between communities they have sampled at different sites or times, and possibly look at how these differences are related to environmental variables [e.g. such as @bray1957ordination]. Thus the focus has been on exploration of the relationships between species and communities. In contrast, JSDMs were developed by and for macro-ecologists, wanting to look at the distributions of species over their whole range, with the primary aim of estimating the effects of environmental covariates on the distribution of species, and thus being able to predict the current and future distributions of the species [@clark2014more]. The role of the residual correlation was to improve the predictions, rather than be interpretable: problems with interpreting the correlations as interactions between species were pointed out early on [@Pollock2014].
-
-Thus, JSDMs tend to focus on a larger spatial scale, and more emphasis is placed on understanding the effects of covariates. As a practical matter, they are also generally based on binary observations [but see @Bjork2018 for a counter-example], whereas ordination has been carried out on a wider range of data. Despite these differences, the underlying idea - to reduce covariation down to a smaller number of dimensions - is the same. Our aim here is to outline the similarities between the two approaches, and to suggest that each can learn from the other. We then suggest a scheme to flexibly extend these methods without making them too unwieldy.
+Thus, JSDMs tend to focus on a larger spatial scale, and more emphasis is placed on understanding the effects of covariates. As a practical matter, they are also generally based on binary observations [but see @Bjork2018 for a counter-example], whereas ordination has been carried out on a wider range of data, and typically at a smaller spatial scale. Despite these differences, the underlying idea - to reduce covariation down to a smaller number of dimensions - is the same. Our aim here is to outline the similarities between the two approaches, and to suggest that each can learn from the other. We then suggest a scheme to flexibly extend these methods without making them too unwieldy.
 
 ## The Models
 
 In order to look at the similarities between ordination and JSDMs, we first need to have a common framework. We will thus first develop a simple example of model-based ordination and JSDMs, and use this to explain the more complex models that have been developed.
 
-In the simplest case, the data are a matrix, with rows being sites, and columns being species. The entries are observations of the species, which can take several forms, e.g. counts, percent cover, or (particularly for JSDMs) species presence. In addition to this, we can have covariates which are associated with the rows or columns, such as measures of the environment (temperature, habitat etc.) for each site, or traits (size, diet etc.) for each species. 
+In the simplest case, the data are a matrix, with rows being sites, and columns being species. The entries are observations of the species, which can take several forms, e.g. counts, percent cover, or (particularly for JSDMs) species presence/absence. In addition to this, we can have covariates which are associated with the rows or columns, such as measures of the environment (temperature, habitat etc.) for each site, or traits (size, diet etc.) for each species. 
 
 We can create a straightforward model for this data. Each observation of species $j$ ($j=1,\dots, p$) at sites $i$ ($i=1,\dots, n$) is denoted $y_{ij}$. We call the full matrix of observations $Y$. We can model $Y$ as an extension of a generalised linear model, with $g\{E(y_{ij})\} = \eta_{ij}$, where $g(\cdot )$ is a link function (e.g. logit or cloglog for binary observations). On the link scale we model the expected value of each datum as
 
@@ -68,7 +76,7 @@ In ordination, $z_{il}$ is called a site score (i.e. a site its location on the 
 
 There are several technical issues that have to be dealt with when fitting this model, for example with two or more latent variables, the site scores are axes that can be rotated, so some constraints are needed so that a unique solution can be found (i.e. to make the model identifiable). However, we will not delve into these details further here.
 
-This model can be extended in many ways, as described below. The strategy for doing this is to include further effects for the sites, species and latent effects, i.e. $\alpha_i$, $\phi_j$, $z_{il}$, and $\gamma_{jl}$. 
+This is the basic model that has been developed for both JSDMs and ordination (as a GLLVM). As described below, it can be extended in many ways, by including further effects for the sites, species and latent effects, i.e. $\alpha_i$, $\phi_j$, $z_{il}$, and $\gamma_{jl}$. 
 
 ### Adding Covariates
 
@@ -83,7 +91,7 @@ where there are $K$ site-level covariates (e.g. climate variables), and $S$ spec
 
 The regression coefficient matrices $\mathbf{\beta}$ and $\mathbf{\theta}$ can become large if there are many covariates, so some way to reduce this is desirable. This is simply a variable selection problem, for which there are several solutions available, through either selecting which variables are "in" and "out", or some form of regularisation [e.g. @OHaraSilanpaa for some Bayesian methods; or @TredennickSelectModels for some non-Bayesian approaches]. 
 
-Random effects can also be added. In essence, this can be interpreted as simply putting a covariance structure on some of the $\beta_{jk}$'s or $\theta_{is}$'s. For example, a phylogenetic effect can be added by having a $\theta_{is}$ for each species, but forcing a phylogenetic correlation, i.e. species with a more recent common ancestor tend to have more similar values of $\theta_{is}$.
+Random effects can also be added. This can be interpreted as simply putting a covariance structure on some of the $\beta_{jk}$'s or $\theta_{is}$'s. For example, a phylogenetic effect can be added by having a $\theta_{is}$ for each species, but forcing a phylogenetic correlation, i.e. species with a more recent common ancestor tend to have more similar values of $\theta_{is}$.
 
 Classical ordination takes a different approach to including covariates. Instead of the site main effects being modeled, covariates are included through **constrained ordination** [e.g. @terBraak86CCA], where the site scores of the latent variables are forced to be linear functions of covariates, i.e. 
 
@@ -130,7 +138,7 @@ Another area where ordination can follow methods developed in the JSDM world is 
 
 # Hierarchical Ordination; a unifying framework for drivers of community processes
 
-The GLLVM framework is flexible enough to be developed in several directions. Site scores have already been modelled as a function of covariates, through a concurrent GLLVM [@vanderVeen2021], and also as a spatial field (allowing for spatial autocorrelation), in a spatial factor analysis [e.g. @Thorson2015]. But species effects, such as traits or phylogenetic effects, could be modelled instead, simply by transposing the data matrix. This can thus link ordination to trait-based analyses.
+The GLLVM framework is flexible enough to be developed in several directions. Site scores have already been modelled as a function of covariates, through a concurrent GLLVM [@vanderVeen2021], and also as a spatial field (allowing for spatial autocorrelation), in a spatial factor analysis [e.g. @Thorson2015]. But species effects, such as traits or phylogenetic effects, could be modelled instead, simply by transposing the data matrix. Ordination can thus be linked to trait-based analyses.
 
 In the fixed effects, estimating the interactions between site and species covariates are the "fourth corner problem". This can be parameter heavy when there are several covariates [e.g. see @Niku2021 in the context of GLLVMs]. One possible approach is to extend the constrained ordination idea, so that both site scores and species loadings are modelled further. This leads us to the idea of what we have called hierarchical ordination, an extension of double constrained ordination [@Ter_BraakdcCCA]. As before we have
 
@@ -159,7 +167,11 @@ Expanding the model, and for clarity using only one latent variable and one spec
 \begin{equation}
 \begin{split}
 \eta_{ij} &= \alpha_i + \phi_j + (\boldsymbol{x}_{i}^\top \boldsymbol{\psi} + \boldsymbol{\varepsilon}_{i}^\top)\Lambda(\boldsymbol{\delta}^\top\boldsymbol{w}_{j} + \boldsymbol{\epsilon}_{j}) \\
-&         = \alpha_i + \phi_j +\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} + \boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} + \boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\epsilon}_{j} + \boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\epsilon}_{j}.
+&         = \alpha_i + \phi_j +
+\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} +
+\boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} + 
+\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\epsilon}_{j} + 
+\boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\epsilon}_{j}.
 \end{split}
 \end{equation}
 
@@ -167,12 +179,12 @@ Expanding the model, and for clarity using only one latent variable and one spec
 This model acts as an efficient model for the fourth corner effect because it incorporates trait by environment interactions by relating them through the latent variables, rather than directly interacting with each other. Thus not all trait and species combination needs to be considered. Going through the ordination terms in, scalar notation, we have 
 
 - $\Lambda$: the variance of the latent variable (on the link scale)
-- $\sum \limits^d_{q=1}\sum \limits^p_{k=1}x_{i,k} \psi_{k,q} \Lambda_{q,q} \sum \limits^{tr}_{t=1}\delta_{t,q}w_{j,tr}$: the fourth-corner term approximated in reduced rank, or a double constrained ordination
-- $\sum \limits^d_{q=1}\varepsilon_{i,q} \Lambda_{q,q}\sum \limits^{tr}_{t=1} \delta_{t,q}w_{j,t}$: a constrained ordination where the species loadings are constrained by traits alone
-- $\sum \limits^d_{q=1}\sum \limits^p_{k=1} x_{i,k}\psi_{k,q}\Lambda_{q,q}\epsilon_{j,q}$: a constrained ordination with site effects determined by environmental covariates
-- $\sum \limits^d_{q=1}\varepsilon_{i,q}^\top \Lambda_{qq} \epsilon_{j,q}$: a residual ordination
+- $\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} = \sum \limits^d_{q=1}\sum \limits^p_{k=1}x_{i,k} \psi_{k,q} \Lambda_{q,q} \sum \limits^{tr}_{t=1}\delta_{t,q}w_{j,tr}$: the fourth-corner term approximated in reduced rank, or a double constrained ordination
+- $\boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} = \sum \limits^d_{q=1}\varepsilon_{i,q} \Lambda_{q,q}\sum \limits^{tr}_{t=1} \delta_{t,q}w_{j,t}$: a constrained ordination where the species loadings are constrained by traits alone
+- $\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\epsilon}_{j} = \sum \limits^d_{q=1}\sum \limits^p_{k=1} x_{i,k}\psi_{k,q}\Lambda_{q,q}\epsilon_{j,q}$: a constrained ordination with site effects determined by environmental covariates
+- $\boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\epsilon}_{j} = \sum \limits^d_{q=1}\varepsilon_{i,q}^\top \Lambda_{qq} \epsilon_{j,q}$: a residual ordination
 
-Each of which would have a different place in the analysis of co-occurrence patterns in ecological communities. Of course, these terms can also include structured random effects.
+Each of which would have a different place in the analysis of co-occurrence patterns in ecological communities. Of course, these terms can also include structured random effects, e.g. spatial or phylogenetic.
 
 Another way to look at this model is that it can model the change in associations between species with the environment [@Tikhonov2017; @Perrin2021]. This comes from the fourth corner term, which models the interaction between traits and environment, so plays the same role as equation \eqref{eq:EnvCor}. 
 
@@ -184,9 +196,22 @@ There may be problems where a single hierarchical ordination is not sufficient. 
 \eta_{ij} = \gamma_{i0} + \beta_{0j} + \sum_{k=1}^K X_{ik} \beta_{jk} + \sum_l^L z_{il} \gamma_{jl}.
 \end{equation}
 
-Potentially, more than one ordination could also be used [@Bjork2018], so the framework is flexible, although there is a cost in adding extra latent levels, both computationally and in terms of interpretation. Using a single ordination, with effects on either species or sites, we simplify the model into manageable parts. The choice of whether to use one or two (or more!) sets of ordination will depend on whether a single ordination is reasonable ecologically, and whether multiple ordinations are feasible computationally. Whilst the complexity of additional ordinations is attractive, the price is that more data will be needed to estimate the parameters of the model, and the fitting will be more difficult.
+Potentially, more than one ordination could also be used [@Bjork2018], so the framework is flexible, at the cost (both computationally and in terms of interpretation) of adding extra latent levels. Using a single ordination, with effects on either species or sites, we simplify the model into manageable parts. The choice of whether to use one or two (or more!) sets of ordination will depend on whether a single ordination is reasonable ecologically, and whether multiple ordinations are feasible computationally. Whilst the complexity of additional ordinations is attractive, the price is that more data will be needed to estimate the parameters of the model, and the fitting will be more difficult.
 
-(ADD COMMENT ABOUT EXAMPLE, REFER TO BOX)
+<!-- Definebox and box title style-->
+\begin{tikzpicture}
+\node [mybox] (box){%
+\begin{minipage}{\textwidth}
+We demonstrate hierarchical ordination with data originally collected by Ribera et al. (2001). It consists of abundance observations of 68 ground beetle species on 87 sites in Scotland, along with 17 environmental variables and 20 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. With so many traits and environmental variables, hierarchical ordination is an attractive approach to controlling the variation.
+
+The model is described in the Supporting Information. Briefly, we model the counts as following a negative-binomial distribution with a log link, two latent variables and linear models for the site scores (with the 17 environmental variables) and species effects (20 traits).
+
+Biplots of the species and site effects are in Fig. 1. The traits and the environment explain 47 and 75 percent of the variation explained by the model. From the 10 estimated latent variables, the first two explain 60 percent of the variation, of which the environmental variables explain 1 percent and 11 percent of the variation in the site scores of the first and second latent variables respectively, and the traits explain 12 percent and 13 percent of the variation in the species effects. Most notably, the latent variables with the largest variance explained by the predictors are the third and fifth for environment and traits, respectively. We can see that the first axis is largely a management gradient, and (in essence) the maximum width and having black legs (CLG2) are the main traits that explain abundance variation. We note that both of these may be phylogenetically conserved.
+\includegraphics[width=0.5\textwidth]{Scores.png}
+\end{minipage}
+};
+\node[fancytitle, right=8pt, yshift=5pt] at (box.north west) {\textbf{An example of hierarchical ordination}};
+\end{tikzpicture}
 
 # Discussion
 
@@ -194,7 +219,7 @@ We have discussed how ordination and JSDMs have converged onto a similar set of 
 
 A model-based approach allows for a lot of flexibility, as we can see in our overview. One downside of this flexibility is the possibility that the model becomes too complex to be interpretable. With a large number of species and sites, it is easy to develop models that ask for all of this information to be used. Our suggestion of a hierarchical approach to ordination tries to reduce this complexity by making the parameters either site- or species- specific. Interactions between the two sets of parameters are made through the latent variables. This is one simplification of the model, so the response of a community to changes in the environment are measured by how the site scores change, and then how this affects species, through their loadings. This shifts focus from individual species or sites to the community, and the gradients. 
 
-It is one thing to write down a model, but another to fit it. For "power users" flexible software, like Nimble [@Nimble2017], which takes advantage of the flexibility and simplicity of the BUGS language, can be used to develop and extend these models. But for most ecologists it would be better to have bespoke software, which would mean developing packages like HMSC [@Ovaskainen2017] and gllvm [@Nikugllvm] to fit models in the full framework.
+It is one thing to write down a model, but another to fit it. For "power users" flexible software, like Nimble [@Nimble2017], which takes advantage of the flexibility and simplicity of the BUGS language, can be used to develop and extend these models. The example shown here was fitted with Nimble, and the code is available in the Supporting Information. But for most ecologists it would be better to have bespoke software, which would mean developing packages like HMSC [@Ovaskainen2017] and gllvm [@Nikugllvm] to fit models in the full framework.
 
 We would not want to suggest that every ordination should use this framework: there will be times when the question being asked requires a different model. However, we feel that our framework is sufficiently flexible for many problems, and will build on both the modelling strengths developed from JSDMs and the visualisation and interpretation provided by the ordination world^[a world that is, of course, only two dimensional]. If extensions are needed, we would suggest that our model provides a starting point, both in terms of writing down the extended model and also in justifying why such an extension is needed. For example, when @Bjork2018 used two ordinations to model two levels of sampling, a natural question is whether it would have been better to use one ordination, with sample and host species levels in the site effects, and with the same species loading. The answer to this question is not just one of modelling, it is also ecologically informative, i.e. about the extent to which species were responding to hosts, or to site effects.
 
