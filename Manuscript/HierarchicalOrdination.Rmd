@@ -14,6 +14,9 @@ header-includes:
    - \tikzstyle{mybox} = [draw=gray, very thick, rectangle, rounded corners, inner sep=10pt, inner ysep=10pt]
    - \tikzstyle{fancytitle} =[text=black]
    - \usepackage{multicol}
+   - \usepackage{caption}
+   - \usepackage{subcaption}
+   - \usepackage{float}
 bibliography: references.bib
 biblio-style: methods-in-ecology-and-evolution.csl
 ---
@@ -38,13 +41,13 @@ Keywords: Ordination, JSDM, GLLVM
 
 ## Introduction
 
-Community ecology is the study of groups of species. One important set of questions relate to how and why species are distributed relative to each other. For example, do particular tend to species occur together, and can this be explained by similar responses to the environment. These same questions can be asked across different scales, e.g. looking at samples from different Dutch sand dunes [@batterink1983een], or the complete distributions of different species across the globe. Statistical methods have been developed to look at this type of data for both of these scales, but their similarities have not been widely appreciated.
+Community ecology is the study of groups of species. One important set of questions relate to how and why species are distributed relative to each other. For example, do particular species tend to occur together, and can this be explained by similar responses to the environment. These same questions can be asked across different scales, e.g. looking at samples from different Dutch sand dunes [@batterink1983een], or the complete distributions of different species across the globe. Statistical methods have been developed to look at this type of data for both of these scales, but their similarities have not been widely appreciated.
 
 The methods we consider in this article assume that species are observed at a number of sites, so the data is a site by species matrix, with entries being a measure of abundance or incidence, e.g. whether a species was observed at that site, or the number of individuals observed. Historically, these data have been summarised by **ordination methods** [e.g. @Gower1966; @terBrakk1985], which look to reduce the variation in data to a small number (usually two) of dimensions. This means that sites and species can be plotted on an **ordination diagram**, which can be inspected visually [@gabrielBiplotGraphicDisplay1971]. More recently, approaches have been developed that are based on modern statistical modelling ideas, leading to the application of Generalised Linear Latent Variable Models in community ecology [@HuiGLLVMs2015;@skrondalGeneralizedLatentVariable2004].
 
-Species distribution model (SDMs) were developed to predict the incidence of species with environmental variables. The perceived importance of interactions between species [@Wisz2013; @Kissling2012] suggested that their distributions should be modelled jointly. This lead to the development of Joint Species Distribution Models [JSDMs: @Pollock2014], which model the response of each species to the environment and then add a correlation matrix to allow for additional covariance between species. It was quickly realised that this matrix becomes unmanageable for many species, as it has so many parameters to estimate. Thus, extensions were developed to model the matrix as the sum of a smaller set of linear effects [e.g. @Warton2015; @Ovaskainen2017]. Because these models are based on a formal probabilistic model (which can be written as a likelihood, and thus fitted to data with flexible statistical methods), they have been extended in a variety of directions (see below). 
+Species distribution models (SDMs) were developed to predict the incidence of species with environmental variables. The perceived importance of interactions between species [@Wisz2013; @Kissling2012] suggested that their distributions should be modelled jointly. This lead to the development of Joint Species Distribution Models [JSDMs: @Pollock2014], which also model the response of each species to the environment, but then incorporate a correlation matrix to allow for covariance between species. It was quickly realised that this matrix becomes unmanageable for many species, as it has so many parameters to estimate. Thus, extensions were developed to model the matrix as the sum of a smaller set of linear effects [e.g. @Warton2015; @Ovaskainen2017]. Because these models are based on a formal probabilistic model (which can be written as a likelihood, and thus fitted to data with flexible statistical methods), they have been extended in a variety of directions (see below). 
 
-The differences in the ways that ordination and JSDMs have been used largely revolve around the aims of the data collection and analysis. Ordination has typically been used for small scale field studies that describe the differences between communities they have sampled at different sites or times, and possibly look at how these differences are related to environmental variables [e.g. such as @bray1957ordination]. Thus the focus has been on exploration of the relationships between species and communities. In contrast, JSDMs were developed by and for macro-ecologists, wanting to look at the distributions of species over their whole range, with the primary aim of estimating the effects of environmental covariates on the distribution of species, and thus being able to predict theie current and future distributions [@clark2014more]. The role of the residual correlation was to improve the predictions, rather than be interpretable: problems with interpreting the correlations as interactions between species were pointed out early on [@Pollock2014].
+The differences in the ways that ordination and JSDMs have been used largely revolve around the aims of the data collection and analysis. Ordination has typically been used for small scale field studies that describe the differences between communities they have sampled at different sites or times, and possibly look at how these differences are related to environmental variables [e.g. such as @bray1957ordination]. Thus the focus has been on exploration of the relationships between species and communities. In contrast, JSDMs were developed by and for macro-ecologists, wanting to look at the distributions of species over their whole range, with the primary aim of estimating the effects of environmental covariates on the distribution of species, and thus being able to predict their current and future distributions [@clark2014more]. The role of the residual correlation was to improve the predictions, rather than be interpretable: problems with interpreting the correlations as interactions between species were pointed out early on [@Pollock2014].
 
 Thus, JSDMs tend to focus on a larger spatial scale, and more emphasis is placed on understanding the effects of covariates. As a practical matter, they are also generally based on binary observations [but see @Bjork2018 for a counter-example], whereas ordination has been carried out on a wider range of data, and typically at a smaller spatial scale. Despite these differences, the underlying idea - to reduce covariation down to a smaller number of dimensions - is the same. Our aim here is to outline the similarities between the two approaches, and to suggest that each can learn from the other. We then suggest a scheme to flexibly extend these methods without making them too unwieldy.
 
@@ -52,27 +55,27 @@ Thus, JSDMs tend to focus on a larger spatial scale, and more emphasis is placed
 
 In order to look at the similarities between ordination and JSDMs, we first need to have a common framework. We will thus first develop a simple example of model-based ordination and JSDMs, and use this to explain the more complex models that have been developed.
 
-In the simplest case, the data are a matrix, with rows being sites, and columns being species. The entries are observations of the species, which can take several forms, e.g. counts, percent cover, or (particularly for JSDMs) species presence/absence. In addition to this, we can have covariates which are associated with the rows or columns, such as measures of the environment (temperature, habitat etc.) for each site, or traits (size, diet etc.) for each species. 
+In the simplest case, the data are a matrix, with rows being sites, and columns being species. The entries are observations of the species, which can take several forms, e.g. counts, percent cover, or (particularly for JSDMs) species' presence/absence. In addition to this, we can have covariates which are associated with the rows or columns, such as measures of the environment (temperature, habitat etc.) for each site, or traits (size, diet etc.) for each species. 
 
-We can create a straightforward model for this data. Each observation of species $j$ ($j=1,\dots, p$) at sites $i$ ($i=1,\dots, n$) is denoted $y_{ij}$. We call the full matrix of observations $Y$. We can model $Y$ as an extension of a generalised linear model, with $g\{E(y_{ij})\} = \eta_{ij}$, where $g(\cdot )$ is a link function (e.g. logit or cloglog for binary observations). On the link scale we model the expected value of each datum as
+We can create a straightforward model for this data. Each observation of species $j$ ($j=1,\dots, p$) at site $i$ ($i=1,\dots, n$) is denoted $y_{ij}$. We call the full matrix of observations $\textbf{Y}$. We can model $\textbf{Y}$ as an extension of a generalised linear model, with $g\{E(y_{ij})\} = \eta_{ij}$, where $g(\cdot )$ is a link function (e.g. logit or cloglog for binary observations). On the link scale we model the expected value of each datum as
 
 \begin{equation}
 \eta_{ij} = \alpha_i + \phi_j + \varepsilon_{ij},
 \end{equation}
 
-where $\alpha_{i}$ is the site effect for site $i$, $\phi_{j}$ is species effect of species $j$, and where $\varepsilon_{ij}$ is an error term. The error ensures that we incorporate the correlation between species [@Pollock2014]:
+where $\alpha_{i}$ is the effect for site $i$, $\phi_{j}$ is an effect of species $j$, and where $\varepsilon_{ij}$ is an error term. The error ensures that we incorporate the correlation between species [@Pollock2014]:
 
 \begin{equation}
-\boldsymbol{\varepsilon}_{i} \sim MVN(\mathbf{0}, \Lambda),
+\boldsymbol{\varepsilon}_{i} \sim MVN(\mathbf{0}, \boldsymbol{\Lambda}),
 \end{equation}
 
-where $\Lambda$ is a $p \times p$ covariance matrix, with off-diagonal terms being the covariances. The number of parameters in $\Lambda$ increases quadratically with the number of species, which makes the matrix difficult to estimate for large $p$, and the large number of parameters also makes the matrix difficult to interpret. The ordination/JSDM approach to handling this is to write the matrix as the sum of a product of row- and column- effects. Each product defines one of $L$ *latent dimensions*.  The model is then
+where $\boldsymbol{\Lambda}$ is a $p \times p$ covariance matrix, with off-diagonal terms being the covariances. The number of parameters in $\boldsymbol{\Lambda}$ increases quadratically with the number of species, which makes the matrix difficult to estimate for large $p$, and the large number of parameters also makes the matrix difficult to interpret. The ordination/JSDM approach to handling this is to write the matrix as the sum of a product of row- and column- effects. Each product defines one of $L$ *latent dimensions*.  The model is then
 
 \begin{equation}
-\eta_{ij} = \alpha_i + \phi_j + \sum \limits^L_{l=1} z_{il} \gamma_{jl},
+\eta_{ij} = \alpha_i + \phi_j + \sum \limits^L_{l=1} z_{il} \gamma_{jl}.
 \end{equation}
 
-In ordination, $z_{il}$ is called a site score (i.e. a site its location on the latent variable), and $\gamma_{jl}$ is called a species loading. We can interpret $z_{il}$ as a location along environmental gradient $l$, or informally that there are $L$ unobserved covariates, with $\gamma_{jl}$ being the regression parameter for the effect of covariate $l$ on species $j$. The scale is arbitrary, so it is convenient to scale the site scores so that $\text{Var}(z_{il})=1$. then the covariance between species one and two becomes $\sum_{l=1}^{L}\gamma_{1l} \gamma_{2l}$. 
+In ordination, $z_{il}$ is called a site score (i.e. a site its location on the latent variable), and $\gamma_{jl}$ is called a species loading. We can interpret $z_{il}$ as a location along gradient $l$, or informally that there are $L$ unobserved covariates, with $\gamma_{jl}$ being the regression parameter for the effect of covariate $l$ on species $j$. The scale is arbitrary, so it is convenient to scale the site scores so that $\text{var}(z_{il})=1$. then the covariance between species one and two becomes $\sum_{l=1}^{L}\gamma_{1l} \gamma_{2l}$. 
 
 There are several technical issues that have to be dealt with when fitting this model, for example with two or more latent variables, the site scores are axes that can be rotated, so some constraints are needed so that a unique solution can be found (i.e. to make the model identifiable). However, we will not delve into these details further here.
 
@@ -84,7 +87,7 @@ The model described above projects the correlation matrix down into $L$ dimensio
 outlined an approach where they incorporate covariates for species and sites respectively, i.e. we could use a model such as:
 
 \begin{equation}
-\eta_{ij} = \sum \limits^{K}_{k=1} \beta_{jk}X_{ik} + \sum \limits^{S}_{s=1}\theta_{is}W_{js}  + \sum \limits_{l=1}^L z_{il}^T \gamma_{jl},
+\eta_{ij} = \sum \limits^{K}_{k=1} \beta_{jk}X_{ik} + \sum \limits^{S}_{s=1}\theta_{is}W_{js}  + \sum \limits_{l=1}^L z_{il} \gamma_{jl},
 \end{equation}
 
 where there are $K$ site-level covariates (e.g. climate variables), and $S$ species-level covariates (e.g. traits). The model is a sum of several terms, each of which is the product of a species and site term. The differences are whether the terms are known (i.e. covariates) or have to be inferred from the model. So the model incorporates responses of species to environmental conditions, as well as the effects of species' characteristics on their site response.
@@ -93,7 +96,7 @@ The regression coefficient matrices $\mathbf{\beta}$ and $\mathbf{\theta}$ can b
 
 Random effects can also be added. This can be interpreted as simply putting a covariance structure on some of the $\beta_{jk}$'s or $\theta_{is}$'s. For example, a phylogenetic effect can be added by having a $\theta_{is}$ for each species, but forcing a phylogenetic correlation, i.e. species with a more recent common ancestor tend to have more similar values of $\theta_{is}$.
 
-Classical ordination takes a different approach to including covariates. Instead of the site main effects being modeled, covariates are included through **constrained ordination** [e.g. @terBraak86CCA], where the site scores of the latent variables are forced to be linear functions of covariates, i.e. 
+Classical ordination takes a different approach to including covariates. Instead of the site main effects being modeled, covariates are included through **constrained ordination** [e.g. @terBraak86CCA], where the site scores of the latent variables are forced to be linear functions of covariates
 
 \begin{equation}
 z_{il} = \sum_{k=1}^K X_{ik} \psi_{kl}.
@@ -105,7 +108,7 @@ This implies that the latent variables are fully explained by the observed covar
 z_{il} = \sum_{k=1}^K X_{ik} \psi_{kl} + \varepsilon_{il}.
 \end{equation}
 
-This assumes that the environmental gradient is affected by (or, at least, correlated with) measures of the environment. Again, random effects can also be added, in particular the gradient can be modelled spatially as a continuous field, leading to a type of **spatial factor analysis** [@Thorson2015], where communities that are closer to each other tend to have more similar site effects. In essence, both fixed and random effects can be used to put structure on $z_{il}$. Another variation on this is to use more than one set of latent variables, with some responding to the environment, and others being unconstrained. For example, @Bjork2018 modelled host-associated microbiota by including separate ordinations for the host species and the samples (within host species). 
+This assumes that the gradient is affected by (or, at least, correlated with) measures of the environment. Again, random effects can also be added, in particular the gradient can be modelled spatially as a continuous field, leading to a type of **spatial factor analysis** [@Thorson2015], where communities that are closer to each other tend to have more similar site effects. In essence, both fixed and random effects can be used to put structure on $z_{il}$. Another variation on this is to use more than one set of latent variables, with some responding to the environment, and others being unconstrained. For example, @Bjork2018 modelled host-associated microbiota by including separate ordinations for the host species and the samples (within host species). 
 
 The **response** of a species to the gradient can also be modelled as being affected by the environment [e.g. @Tikhonov2017; @Perrin2021]:
 
@@ -160,9 +163,9 @@ and
 
 Because both $z_{il}$ and $\gamma_{jl}$ can be written as sums of other terms, it is straightforward model them both hierarchically, as we would for any other hierarchical model. For example, a spatial effect can be added to the site scores, similar to the spatial factor analysis idea, but trait and phylogenetic effects can also be added to the species loadings. The method developed by @Ter_BraakdcCCA is similar, but they assume $z_{il} = \sum\limits_{k=1}^K X_{ik} \psi_{kl}$ and $\gamma_{jl} = \sum \limits_{s=1}^S W_{js} \delta_{sl}$, i.e. the site scores and species effects are fully determined by the covariates.
 
-We can also standardise $z_{il}$ and $\gamma_{jl}$ so each has a variance of one, and then introduce a matrix of scaling parameters $\Lambda$. The main diagonal of this matrix can be interpreted in the same way as an singular values in classical ordination: it summarises how much of the variation can be explained by that latent variable. Typically all of the values off the main diagonal would be zero, although this is not necessary: off-diagonal terms would mean that the latent variables are correlated. Consequently, hierarchical ordination is more similar in form to classical ordination methods than existing model-based ordination methods.
+We can also standardise $z_{il}$ and $\gamma_{jl}$ so each has a variance of one, and then introduce a matrix of scaling parameters $\boldsymbol{\Lambda}$. The main diagonal of this matrix can be interpreted in the same way as an singular values in classical ordination: it summarises how much of the variation can be explained by that latent variable. Typically all of the values off the main diagonal would be zero, although this is not necessary: off-diagonal terms would mean that the latent variables are correlated. Consequently, hierarchical ordination is more similar in form to classical ordination methods than existing model-based ordination methods.
 
-Expanding the model, and for clarity using only one latent variable and one species- and site- covariate, we get 
+Expanding the model, we get 
 
 \begin{equation}
 \begin{split}
@@ -176,9 +179,9 @@ Expanding the model, and for clarity using only one latent variable and one spec
 \end{equation}
 
 
-This model acts as an efficient model for the fourth corner effect because it incorporates trait by environment interactions by relating them through the latent variables, rather than directly interacting with each other. Thus not all trait and species combination needs to be considered. Going through the ordination terms in, scalar notation, we have 
+This model acts as an reduced version for the fourth corner latent variable model because it incorporates trait by environment interactions through the latent variables. Going through the ordination terms in, scalar notation, we have 
 
-- $\Lambda$: the variance of the latent variable (on the link scale)
+- $\boldsymbol{\Lambda}$: the variance of the latent variable (on the link scale), similar to singular values i classical ordination
 - $\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} = \sum \limits^d_{q=1}\sum \limits^p_{k=1}x_{i,k} \psi_{k,q} \Lambda_{q,q} \sum \limits^{tr}_{t=1}\delta_{t,q}w_{j,tr}$: the fourth-corner term approximated in reduced rank, or a double constrained ordination
 - $\boldsymbol{\varepsilon}_{i}^\top \Lambda \boldsymbol{\delta}^\top\boldsymbol{w}_{j} = \sum \limits^d_{q=1}\varepsilon_{i,q} \Lambda_{q,q}\sum \limits^{tr}_{t=1} \delta_{t,q}w_{j,t}$: a constrained ordination where the species loadings are constrained by traits alone
 - $\boldsymbol{x}_{i}^\top \boldsymbol{\psi} \Lambda \boldsymbol{\epsilon}_{j} = \sum \limits^d_{q=1}\sum \limits^p_{k=1} x_{i,k}\psi_{k,q}\Lambda_{q,q}\epsilon_{j,q}$: a constrained ordination with site effects determined by environmental covariates
@@ -193,7 +196,7 @@ One advantage of having an explicit hierarchical ordination framework is that vi
 There may be problems where a single hierarchical ordination is not sufficient. For example, an additional species-specific covariate effect may be needed, leading to this model:
 
 \begin{equation}
-\eta_{ij} = \gamma_{i0} + \beta_{0j} + \sum_{k=1}^K X_{ik} \beta_{jk} + \sum_l^L z_{il} \gamma_{jl}.
+\eta_{ij} = \alpha_i + \phi_j + \sum_{k=1}^K X_{ik} \beta_{jk} + \sum_l^L z_{il} \gamma_{jl}.
 \end{equation}
 
 Potentially, more than one ordination could also be used [@Bjork2018], so the framework is flexible, at the cost (both computationally and in terms of interpretation) of adding extra latent levels. Using a single ordination, with effects on either species or sites, we simplify the model into manageable parts. The choice of whether to use one or two (or more!) sets of ordination will depend on whether a single ordination is reasonable ecologically, and whether multiple ordinations are feasible computationally. Whilst the complexity of additional ordinations is attractive, the price is that more data will be needed to estimate the parameters of the model, and the fitting will be more difficult.
@@ -206,8 +209,24 @@ We demonstrate hierarchical ordination with data originally collected by Ribera 
 
 The model is described in the Supporting Information. Briefly, we model the counts as following a negative-binomial distribution with a log link, two latent variables and linear models for the site scores (with the 17 environmental variables) and species effects (20 traits).
 
-Biplots of the species and site effects are in Fig. 1. The traits and the environment explain 47 and 75 percent of the variation explained by the model. From the 10 estimated latent variables, the first two explain 60 percent of the variation, of which the environmental variables explain 1 percent and 11 percent of the variation in the site scores of the first and second latent variables respectively, and the traits explain 12 percent and 13 percent of the variation in the species effects. Most notably, the latent variables with the largest variance explained by the predictors are the third and fifth for environment and traits, respectively. We can see that the first axis is largely a management gradient, and (in essence) the maximum width and having black legs (CLG2) are the main traits that explain abundance variation. We note that both of these may be phylogenetically conserved.
-\includegraphics[width=0.5\textwidth]{Scores.png}
+Biplots of the species and site effects are in Fig. 1. The traits and the environment explain 47 and 75 percent of the variation explained by the model. From the 10 estimated latent variables, the first two explain 60 percent of the variation, of which the environmental variables explain 1 percent and 11 percent of the variation in the site scores of the first and second latent variables respectively, and the traits explain 12 percent and 13 percent of the variation in the species effects, indicating that the dominant ecological gradients cannot be represented well by the covariates. Most notably, the latent variables with the largest variance explained by the predictors are the third and fifth for environment and traits, respectively. We can see that the first axis is largely a management gradient, and (in essence) the maximum width and having black legs (CLG2) are the main traits that explain abundance variation. We note that both of these may be phylogenetically conserved.
+\begin{figure}[H]
+\centering
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{sites.png}
+  \caption{Sites plot with environmental effects.}
+  \label{fig:sub1}
+\end{subfigure}%
+\begin{subfigure}{.5\textwidth}
+  \centering
+  \includegraphics[width=\linewidth]{species.png}
+  \caption{Species plot with traits effects.}
+  \label{fig:sub2}
+\end{subfigure}
+\caption{Visualization of the hierarchical ordination for the beetle data. Note, that the environmental effects could have been plotted in the species plot, or the trait effects in the sites plot, instead.}
+\label{fig:test}
+\end{figure}
 \end{minipage}
 };
 \node[fancytitle, right=8pt, yshift=5pt] at (box.north west) {\textbf{An example of hierarchical ordination}};

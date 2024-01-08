@@ -8,11 +8,11 @@ date: "`r Sys.Date()`"
 knitr::opts_chunk$set(echo = TRUE, cache=TRUE)
 ```
 
-# An Example of Hierarchical Ordination
+# An example of Hierarchical Ordination
 
 This document describes fitting a hierarchical ordination to data, including code and the details that are needed.
 
-The data is included in the *mvabund* *R*-package, but was originally collected by [Gibb *et al.*](https://link.springer.com/article/10.1007/s00442-014-3101-9). It is includes abundance observations of 41 ant species at 30 sites in Australia, along with 7 environmental variables and 5 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. The methodological question is how does hierarchical ordination help.
+The data is included in the *mvabund* *R*-package, but was originally collected by [Gibb *et al.*](https://link.springer.com/article/10.1007/s00442-014-3101-9). It includes abundance observations of 41 ant species at 30 sites in Australia, along with 7 environmental variables and 5 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. The methodological question is how does hierarchical ordination help.
 
 The abundances, traits and environment are each stored in a different matrix. First we load the data and set some constants:
 
@@ -111,7 +111,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   require(nimble)
   require(nimbleHMC)
   AllSamplers <- HMCsamplers <- c('epsilonSTAR', 'varepsilonSTAR', 'beta0', 'OSTAR', 'BSTAR',
-                  'sd.Site', 'sd.Species','xi')
+                  'sd.SiteSTAR', 'sd.SpeciesSTAR','xi')
   
   if(!is.null(block)){
   HMCsamplers <- HMCsamplers[!HMCsamplers%in%unique(gsub("\\s*\\[[^\\)]+\\]","",c(unlist(block),unlist(slice))))]
@@ -121,11 +121,10 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
                    "epsilon", "varepsilon", "gamma", "z", "xi")
   }
   mod <- nimbleModel(code = code, name = "HO", inits = inits(consts), constants = consts, data = dat, buildDerivs = TRUE)
-    model <- compileNimble(mod)
+  model <- compileNimble(mod)
   
   # Do HMC
-    conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE, 
-                         control=list(nwarmup=Nburn))
+    conf <- configureHMC(model, nodes = HMCsamplers, monitors = ToMonitor, print = FALSE)
     if(!is.null(block)) { 
     if(is.list(block)){
     # Use a slice everything that not being HMCed
@@ -149,7 +148,7 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
   mcmc <- buildMCMC(conf)
   cmcmc <- compileNimble(mcmc, project = model)
   res <- runMCMC(cmcmc,  niter=NIter, nburnin = Nburn, thin=Nthin, 
-                 nchains = 1, samplesAsCodaMCMC = TRUE)
+                 nchains = 1, samplesAsCodaMCMC = TRUE, ...)
   return(res)
 }
 
@@ -165,7 +164,7 @@ ParaNimble <- function(NChains, ...) {
 
   require(parallel)
   nimble_cluster <- makeCluster(NChains)
-  
+  clusterExport(nimble_cluster, "nimQR.u")
   samples <- parLapply(cl = nimble_cluster, X = seeds, ...)
   stopCluster(nimble_cluster)
 
@@ -179,7 +178,7 @@ ParaNimble <- function(NChains, ...) {
 MakeBlockList <- function(consts, LVwise = TRUE){
 # builds list for slice AF sampling
 # with LVwise = TRUE we are LV-wise blocking B and epsilon, and O and varepsilon
-# otherwise, LVs are jointly blocked
+# otherwise we block across LVs but per parameter
 if(LVwise & consts$nLVs>1){
 blockList <- c(sapply(1:consts$nLVs,
        function(x,consts){
@@ -197,6 +196,7 @@ blockList <- c(sapply(1:consts$nLVs,
          consts = consts,simplify=F)
        )
 }else{
+  #blockList = list("BSTAR","epsilonSTAR","OSTAR","varepsilonSTAR")
   blockList = list(c("BSTAR","epsilonSTAR"),c("OSTAR","varepsilonSTAR"))
 }
 blockList
@@ -278,19 +278,24 @@ postProcess <- function(Chains, VarsToProcess, VarsToSwapBy = NULL, VarToSign=NU
   }
   
   }else if(rule==2){
-    require(MCMCglmm)
     require(mousetrap)
     
-    psMode<-lapply(Chains, function(ch)posterior.mode(ch))
     jointChains <- do.call(rbind, Chains)
     # bimodality score
     bms<-apply(jointChains[,SignInd],2,bimodality_coefficient)
     # find maximum bimodality score
+    if(SeveralLVs){
     lstSgn <- sapply(unique(LV),function(lv)which.max(bms[grep(lv,names(bms))]),simplify=F)
     # formatting
     names(lstSgn) <- NULL
     VarsToSwapBy <- names(unlist(lstSgn))
     names(VarsToSwapBy) <- paste0(sort(unique(LV)))
+    }else{
+    lstSgn <- which.max(bms)
+    # formatting
+    VarsToSwapBy <- names(lstSgn)
+    names(VarsToSwapBy) <- "1]"
+    }
   }
   
   if(print) message(paste0("Swapping by ", paste(VarsToSwapBy, collapse=", ")))
@@ -306,9 +311,7 @@ ChainToMatrix <- function(ch, name) {
   l.row <- as.numeric(gsub(".*\\[", "", gsub(",.*", "", names(v))))
   l.col <- as.numeric(gsub(".*, ", "", gsub("\\]", "", names(v))))
   mat <- matrix(0, nrow=max(l.row), ncol=max(l.col))
-  for(i in seq_along(ch)) { # there must be a quicker way...
-    mat[l.row[i], l.col[i]] <- v[i]
-  }
+  mat[l.row+max(l.row)*(l.col-1)]<-v
   mat
 }
 
@@ -353,88 +356,27 @@ RescaleChains <- function(mcmc.lst, ...) {
   })
   as.mcmc.list(rescale)
 }
-
-
-# Function to rotate a latent variable, defaults to Varimax. Methods in GPArotation package
-# ch: one draw from MCMC chain
-# RotateBy: name of variable to rotate by (i.e. to calculate the rotation matrix for)
-# SDby: name of Standard deviations
-# ToRotate: Variables to rotate (e.g. epsilons, gamma/z).
-# SDToRotate: Standatd devations to rotate
-# rotation.fn: Function in GPArotation to calcualte rotation, or svd. Defaults to svd.
-# scale: Should RotateBy be scaled by SDby before rotating? Defaults to FALSE
-rotate2LV <- function(ch, RotateBy, SDby, ToRotate=NULL, SDToRotate=NULL, rotation.fn="svd", 
-                      scale=FALSE) {
-  require(GPArotation)
-  # Function to rotate matrices & return full vector or a matrix (retmat)
-  RotateVar <- function(name, vec, rotmat, retmat=FALSE) {
-    mat <- ChainToMatrix(ch=vec, name=name)
-    rotated <- mat%*%rotmat
-    
-    if(retmat) {
-      res <- rotated
-    } else {
-      vec[grep(paste0("^", name, "\\["), names(vec))] <- c(rotated)
-      res <- vec
-    }
-    res
-  }
-# Function to rotate (diagonal) matrices & return the diagonal
-  RotateSD <- function(name, vec, rotmat) {
-    mat <- diag(vec[grep(paste0("^", name, "\\["), names(vec))])
-    rotated <- mat%*%rotmat
-    
-    vec[grep(paste0("^", name, "\\["), names(vec))] <- diag(rotated)
-    vec
-  }
-
-  # Extract SDs and latent variables
-  SDs <- ch[grep(SDby, names(ch))]
-  LVmat <- ChainToMatrix(ch, RotateBy)
-  if(scale) LVmat <- sweep(LVmat, 2, SDs, "*")
-  
-  # Calculate a rotation matrix
-  if(rotation.fn!="svd"){
-  loadings.r  <- do.call(rotation.fn, list(A=LVmat)) # rotate
-  }else{
-  rot <- svd(LVmat)$v
-  loadings.r <- list(Th=rot, loadings = LVmat%*%rot)
-  }
-  
-  # Retrieve correct scale of LVs
-  if(scale){
-    #also need to put LVs into here
-    ch[grep(paste0("^", RotateBy, "\\["), names(ch))]  <- scale(loadings.r$loadings)
-    ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")
-  } else{
-   # if LVs are not scaled by LV sds, we just add the new LV scale to LVs SDs.
-     ch[grep(paste0("^", RotateBy, "\\["), names(ch))] <- scale(loadings.r$loadings)
-     ch[grep(paste0("^", SDby, "\\["), names(ch))] <- attr(scale(loadings.r$loadings),"scaled:scale")*SDs
-  }
-
-  # Rotate rest of the variables
-  for(nm in unique(ToRotate)) {
-    ch <- RotateVar(vec=ch, name=nm, rotmat=loadings.r$Th, retmat = FALSE)
-  }
-   for(nm in unique(SDToRotate)) {
-    ch <- RotateSD(vec=ch, name=nm, rotmat=loadings.r$Th)
-  }
-
-  ch
-}
-
-RotateChains <- function(mcmc.lst, RotateBy="z", SDby = "sd.LV", 
-                         ToRotate=c("B", "epsilon", "gamma", "O", "varepsilon"), 
-                         SDToRotate=c("sd.Site", "sd.Species"), ...) {
-  if(SDby%in%SDToRotate)stop("'SDby' should not be present in 'SDToRotate'.")
-  if(RotateBy%in%ToRotate)stop("'RotateBy' should not be present in 'ToRotate'.")
-  rotated <- lapply(mcmc.lst, function(mcmc) {
-    rot <- apply(mcmc, 1, rotate2LV, RotateBy=RotateBy, SDby = SDby, 
-                         ToRotate=ToRotate, SDToRotate=SDToRotate, ...)
-    as.mcmc(t(rot))
-  })
-  as.mcmc.list(rotated)
-}
+# 
+# # Function to process B and O to orthogonal columns
+# processChainPredEffs <- function(ch){
+#   B <- ChainToMatrix(ch, "B")
+#   O <- ChainToMatrix(ch, "O")
+#   do.svd.B <- svd(B)
+#   do.svd.O <- svd(O)
+#   B <- B%*%do.svd.B$v
+#   O <- O%*%do.svd.O$v
+#   ch[grep(paste0("^", "B", "\\["), names(ch))] <- c(B)
+#   ch[grep(paste0("^", "O", "\\["), names(ch))] <- c(O)
+#   ch
+# }
+# 
+# processPredEffs <- function(mcmc.lst) {
+#   rotated <- lapply(mcmc.lst, function(mcmc) {
+#     rot <- apply(mcmc, 1, processChainPredEffs)
+#     as.mcmc(t(rot))
+#   })
+#   as.mcmc.list(rotated)
+# }
 
 ```
 </details>
@@ -456,8 +398,8 @@ inits <- function(consts){
         OSTAR = O,
         epsilonSTAR = epsilon,
         varepsilonSTAR = varepsilon,
-        sd.Site = rexp(consts$nLVs),
-        sd.Species = rexp(consts$nLVs),
+        sd.SiteSTAR = rexp(consts$nLVs),
+        sd.SpeciesSTAR = rexp(consts$nLVs),
         beta0 = rnorm(consts$NSpecies),
         # sd.LV = rexp(consts$nLVs),
         xi = xi
@@ -517,7 +459,7 @@ Latent variable models are notorious for being unidentifiable, you can get the s
 - First, we standardise $\boldsymbol{z}_i$ and $\boldsymbol{\gamma}_j$ to unit variance per latent variable to prevent scale invariance
 - At this point the model is still invariant to sign switching: because $z_{i}\gamma_{j} = (-z_{i})(-\gamma_{j})$ in the MCMC algorithm can (and does) switch signs mid run. We could solve it by placing a truncated normal prior on the main diagonal entries of $\boldsymbol{B}$ or $\boldsymbol{\omega}$, but that results in bimodal posterior distributions for other coefficients. Instead we impose sign constraints by post-process the chains. We choose one parameter, for example one $z_{i}$ or $\gamma_{j}$, to be positive, and switch all of the other parameters based on that one. See below for the details of how we fix the signs.
 
-We want to make one parameter positive, so ideally we want to do this to a parameter that has both modes away from zero. We can identify this in an **ad hoc** way: for each chain for every parameter we calculate the proportion of iterations where the sign is positive, and then for every parameter we calculate the variance in that proportion. If a parameter is centered around 0 the mean proportion will be about 0.5, and will not vary much, whereas if it is some way from 0 the mean will be close to 0 or 1, and the variance will be high. ALternativley, we coiuld look at the largest $|p - 0.5|$, or we can vissually identify such parameters from the posterior samples. There may be even better alternatives.
+We want to make one parameter positive, so ideally we want to do this to a parameter that has both modes away from zero. We can identify this in an **ad hoc** way: for each chain for every parameter we calculate the proportion of iterations where the sign is positive, and then for every parameter we calculate the variance in that proportion. If a parameter is centered around 0 the mean proportion will be about 0.5, and will not vary much, whereas if it is some way from 0 the mean will be close to 0 or 1, and the variance will be high. Alternatively, we could look at the largest $|p - 0.5|$, or we can visually identify such parameters from the posterior samples. There may be even better alternatives.
 
 </details>
 
@@ -525,7 +467,7 @@ We want to make one parameter positive, so ideally we want to do this to a param
 ## Maximum informed dimensions
 
 Now that we have two or more latent variables, we also have to worry about their rotation. Previously, we fixed some parameters to fix the rotation. That has the downside of having to set the number of latent variables *a-priori*. The following ideas are build on the developments by [Bhattacharya and Dunson (2011)](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3419391/). <details><summary>For those who are interested, this is explained further here.</summary>
-The infinite factor model is motivated by the fact that the latent variables may be affected by the rotation, but the various model terms are not. The main effects for the predictors, as well as the fourth corner term, are invariant to the rotation and can be estimated even when the model is unidentifiable. However, we may wish to find the number of dimensions necessary to accurtately represent the predictor terms. To do so,  first we introduce the $d-$sized vector $\symbf{\xi}$. We assume the following prior structure for this vector: $\xi_1 \sim \Gamma(5, 2)$ and $\xi_{q \in d \setminus \{1\}} \sim B(p/(2q+p),q)$. We parameterize the LV variation parameters as: $\Sigma_{q,q} = \prod^d_{q=1} \delta_{1:q}$, so that each latent variable (essentially) explains less variation than the next. This shows that the choice for the parameterization of the gamma distribution is to be uninformative, since we do not know how much variation the latent variables explain in the data (but usually, this ranges between 1-5). The choice of parameterization for the beta distribution is motivated as a shrinkage prior; with a low mean and large variance so that the variation for each consecutive latent variable is forced to be considerably lower than that of the previous latent variable. Additionally, by using the index of the latent variable, and the total number of species, as parameters for the prior we ensure that each latent variable receives more shrinkage than the next, and emphasis is placed on a relatively small number of latent variables.
+The infinite factor model is motivated by the fact that the latent variables may be affected by the rotation, but the various model terms are not. The main effects for the predictors, as well as the fourth corner term, are invariant to the rotation and can be estimated even when the model is unidentifiable. However, we may wish to find the number of dimensions necessary to accurately represent the predictor terms. To do so,  first we introduce the $d-$sized vector $\symbf{\xi}$. We assume the following prior structure for this vector: $\xi_1 \sim \Gamma(5, 2)$ and $\xi_{q \in d \setminus \{1\}} \sim B(p/(2q+p),q)$. We parameterize the LV variation parameters as: $\Sigma_{q,q} = \prod^d_{q=1} \delta_{1:q}$, so that each latent variable (essentially) explains less variation than the next. This shows that the choice for the parameterization of the gamma distribution is to be uninformative, since we do not know how much variation the latent variables explain in the data (but usually, this ranges between 1-5). The choice of parameterization for the beta distribution is motivated as a shrinkage prior; with a low mean and large variance so that the variation for each consecutive latent variable is forced to be considerably lower than that of the previous latent variable. At this point, the model is not identifiable as it lacks $d(d-1)$ constraints. To fully identify the model, we additionally assume that the columns of $\symbf{B}$ and $\symbf{O}$ are orthogonal. We impose this constraint by, at each iteration, computing the cholesky factor of the inner product for $\symbf{B}$ and $\symbf{O}$ where the columns are standardized by their Frobenius norms, and by right-multiplying the matrices by the inverse of the computed cholesky factors. Post-orthogonalisation, the columns are again scaled by their Frobenius norms.
 </details>
 
 We could still estimate *some* but not all latent variables, for example in larger examples and to speed up computation. The maximum number of latent variables that can be informed (see van der Veen et al. (2023)) by the predictor variables is determined by the number of traits and environmental predictors that we have. In essence, we cannot have more latent variables that the minimum number of traits and environmental predictors, because at that point we have reached the maximum amount of information that (one of, or the combination of) the matrices can explain in the responses (i.e., one of the matrices alone could explain more variation still). In the example here, there are five environmental predictors, but seven traits. Thus, the maximum number of latent variables that can be informed by the matrices jointly is five, though two more dimensions could be informed by the traits alone.
@@ -541,63 +483,98 @@ HO.nim <- nimbleCode({
       Y[i, j] ~ dpois(lambda[i, j])
     }      
   }
-  diagNSites[1:NSites,1:NSites] <- diag(NSites)
-  diagNSpecies[1:NSpecies,1:NSpecies] <- diag(NSpecies)
-  zeroNSites[1:NSites] <- rep(0, NSites)
-  zeroNSpecies[1:NSpecies] <- rep(0, NSpecies)
-     for (l in 1:nLVs) {
-      epsilonSTAR[1:NSites,l] ~ dmnorm(zeroNSites[1:NSites], prec = diagNSites[1:NSites,1:NSites])# Residual
-     }
-      for (l in 1:nLVs) {
-      varepsilonSTAR[1:NSpecies,l] ~ dmnorm(zeroNSpecies[1:NSpecies], prec = diagNSpecies[1:NSpecies,1:NSpecies]) # Residual
-    }
+
     ones[1:NSites] <- rep(1, NSites)
     # linear predictor
     log(lambda[1:NSites, 1:NSpecies]) <- eta[1:NSites, 1:NSpecies]
-    eta[1:NSites,1:NSpecies] <-  asCol(ones[1:NSites])%*%asRow(beta0[1:NSpecies]) +zSigma[1:NSites,1:nLVs]%*%t(gamma[1:NSpecies,1:nLVs])
-    zSigma[1:NSites, 1:nLVs] <- z[1:NSites,1:nLVs]%*%diag(sd.LV[1:nLVs])
+    eta[1:NSites,1:NSpecies] <-  asCol(ones[1:NSites])%*%asRow(beta0[1:NSpecies]) +z[1:NSites,1:nLVs]%*%Sigma[1:nLVs,1:nLVs]%*%t(gamma[1:NSpecies,1:nLVs])
+    Sigma[1:nLVs, 1:nLVs] <- diag(sd.LV[1:nLVs])
     # sites
-    XB[1:NSites,1:nLVs] <- X[1:NSites,1:NEnv]%*%BSTAR[1:NEnv,1:nLVs]
-    zSTAR[1:NSites,1:nLVs] <- XB[1:NSites,1:nLVs] + epsilonSTAR[1:NSites,1:nLVs]%*%diag(sd.Site[1:nLVs])
+    XB[1:NSites,1:nLVs] <- X[1:NSites,1:NEnv]%*%B.ort[1:NEnv,1:nLVs]
+    zSTAR[1:NSites,1:nLVs] <- XB[1:NSites,1:nLVs] + epsilonSTAR[1:NSites,1:nLVs]%*%diag(sd.SiteSTAR[1:nLVs])
     # species
-    gammaSTAR[1:NSpecies,1:nLVs] <- omegaTR[1:NSpecies,1:nLVs] + varepsilonSTAR[1:NSpecies,1:nLVs]%*%diag(sd.Species[1:nLVs])
-    omegaTR[1:NSpecies,1:nLVs] <- TR[1:NSpecies,1:NTraits]%*%OSTAR[1:NTraits,1:nLVs]
+    gammaSTAR[1:NSpecies,1:nLVs] <- omegaTR[1:NSpecies,1:nLVs] + varepsilonSTAR[1:NSpecies,1:nLVs]%*%diag(sd.SpeciesSTAR[1:nLVs])
+    omegaTR[1:NSpecies,1:nLVs] <- TR[1:NSpecies,1:NTraits]%*%O.ort[1:NTraits,1:nLVs]
   
-    beta0[1:NSpecies] ~ dmnorm(zeroNSpecies[1:NSpecies], prec = diagNSpecies[1:NSpecies,1:NSpecies])
-
+  # prior for intercept
+  beta0[1:NSpecies] ~ dmnorm(zeroNSpecies[1:NSpecies], prec = diagNSpecies[1:NSpecies,1:NSpecies])
+  
+  # prior for LV scales
   xi[1] ~ dgamma(5,2)
   for(l in 2:nLVs) {
   xi[l] ~ dbeta(1, 10)#NSpecies/(2*l+NSpecies), l^2) #dbeta(1,20)# could instead be dunif(0,1) to be less informative
   }
   
+  # diagonal matrices and such for use in priors
   diagNTraits[1:NTraits,1:NTraits] <- diag(NTraits)
   diagNEnv[1:NEnv,1:NEnv] <- diag(NEnv)
   zeroNTraits[1:NTraits] <- rep(0, NTraits)
   zeroNEnv[1:NEnv] <- rep(0, NEnv)
+  diagNSites[1:NSites,1:NSites] <- diag(NSites)
+  diagNSpecies[1:NSpecies,1:NSpecies] <- diag(NSpecies)
+  zeroNSites[1:NSites] <- rep(0, NSites)
+  zeroNSpecies[1:NSpecies] <- rep(0, NSpecies)
+  
     for(l in 1:nLVs) { 
-      OSTAR[1:NTraits,l] ~ dmnorm(zeroNTraits[1:NTraits], prec = diagNTraits[1:NTraits,1:NTraits]) 
-      BSTAR[1:NEnv,l] ~ dmnorm(zeroNEnv[1:NEnv], prec = diagNEnv[1:NEnv,1:NEnv]) 
-    
-    ## standardizing z and gamma
-    ## not mean centering
+    # prors for LV-level errors
+    epsilonSTAR[1:NSites,l] ~ dmnorm(zeroNSites[1:NSites], prec = diagNSites[1:NSites,1:NSites])# Residual
+    varepsilonSTAR[1:NSpecies,l] ~ dmnorm(zeroNSpecies[1:NSpecies], prec = diagNSpecies[1:NSpecies,1:NSpecies]) # Residual
+    # priors for predictor effects
+    OSTAR[1:NTraits,l] ~ dmnorm(zeroNTraits[1:NTraits], prec = diagNTraits[1:NTraits,1:NTraits]) 
+    BSTAR[1:NEnv,l] ~ dmnorm(zeroNEnv[1:NEnv], prec = diagNEnv[1:NEnv,1:NEnv]) 
+    # priors for scale parameters
+    sd.SiteSTAR[l] ~ dexp(1)
+    sd.SpeciesSTAR[l] ~ dexp(1)
+    # constructing LV scale
+    sd.LV[l] <- prod(xi[1:l])
+        
+    ## standardizing z and gamma for identifiability
+    ## and B and O to have non-unit norms
+    ## rescale  the rest of the parameters for trace plots and such
+    ## these are the quantities that really go into eta
+    #norm.B[l] <- sqrt(sum(BSTAR[1:NEnv,l]^2))
+    #norm.O[l] <- sqrt(sum(OSTAR[1:NTraits,l]^2))
     StdDev.z[l] <- sd(zSTAR[1:NSites,l])
     z[1:NSites,l] <- zSTAR[1:NSites,l]/StdDev.z[l]
+    epsilon[1:NSites,l] <- epsilonSTAR[1:NSites,l]/StdDev.z[l]
+    B[1:NEnv,l] <- B.ort[1:NEnv,l]/StdDev.z[l]#*norm.B[l]
+    sd.Site[l] <- sd.SiteSTAR[l]/StdDev.z[l]
     
     StdDev.gamma[l] <- sd(gammaSTAR[1:NSpecies,l])
     gamma[1:NSpecies,l] <- gammaSTAR[1:NSpecies,l]/StdDev.gamma[l]
-    
-    # Scale other parameters
-    epsilon[1:NSites,l] <- epsilonSTAR[1:NSites,l]/StdDev.z[l]
-    B[1:NEnv,l] <-  BSTAR[1:NEnv,l]/StdDev.z[l]
     varepsilon[1:NSpecies,l] <- varepsilonSTAR[1:NSpecies,l]/StdDev.gamma[l]
-    O[1:NTraits,l] <-  OSTAR[1:NTraits,l]/StdDev.gamma[l]
+    O[1:NTraits,l] <- O.ort[1:NTraits,l]/StdDev.gamma[l]#*norm.O[l]
+    sd.Species[l] <- sd.SpeciesSTAR[l]/StdDev.gamma[l]
+    }
   
-    # priors for scales
-    sd.Site[l] ~ dexp(1)
-    sd.Species[l] ~ dexp(1)
-    sd.LV[l] <- prod(xi[1:l])
-    } 
+    # Orthogonalize B and O for identifiability
+    # first predictor effects B by its F norm
+    # B.nn[1:NEnv,1:nLVs] <- BSTAR[1:NEnv,1:nLVs]%*%diag(1/norm.B[1:nLVs])
+    # O.nn[1:NTraits,1:nLVs] <- OSTAR[1:NTraits,1:nLVs]%*%diag(1/norm.O[1:nLVs])
+    # # get Cholesky factor
+    # L.B[1:nLVs,1:nLVs] <- chol(t(B.nn[1:NEnv,1:nLVs])%*%B.nn[1:NEnv,1:nLVs])
+    # L.O[1:nLVs,1:nLVs] <- chol(t(O.nn[1:NTraits,1:nLVs])%*%O.nn[1:NTraits,1:nLVs])
+    # # Orthogonalize predictor effects
+    # B.ort[1:NEnv,1:nLVs] <- t(forwardsolve(t(L.B[1:nLVs,1:nLVs]),t(B.nn[1:NEnv,1:nLVs])))
+    # O.ort[1:NTraits,1:nLVs] <- t(forwardsolve(t(L.O[1:nLVs,1:nLVs]),t(O.nn[1:NTraits,1:nLVs])))
+    B.ort[1:NEnv,1:nLVs] <- nimQR.u(BSTAR[1:NEnv,1:nLVs], nLVs)
+    O.ort[1:NTraits,1:nLVs] <- nimQR.u(OSTAR[1:NTraits,1:nLVs],nLVs)
 })
+# QR schwarz-Rutishauser
+# The algorithm is correct, but I cannot use it with HMC..
+nimQR.u <- nimbleFunction(
+  run = function(A = double(2), p  = double()) {
+    for (k in 2:p) {
+      A[, k] <- A[, k]
+      for (i in 1:(k-1)) {
+        A[, k] <- A[, k] - inprod(A[,i], A[,k]) / inprod(A[, i], A[, i]) * A[, i]
+      }
+    }
+    return(A)
+    returnType(double(2))
+  } ,
+buildDerivs = list(run = list(ignore = c("k", "i","p")))
+)
 ```
 
 </details>
@@ -611,35 +588,32 @@ HO.LV <- ParaNimble(4, fun = RunOneChain,
                        code = HO.nim,
                        inits = inits, 
 #                       Nburn=5e1, NIter=5.5e2, Nthin=1, # for a small run
-                       Nburn = 1000, NIter = 6e3, Nthin = 1, # for a full run
-                       consts = consts, block = MakeBlockList(consts), slice = c(paste0("beta0[",1:consts$NSpecies,"]"))) # HMC on the rest (hypers)
+                       Nburn = 1000, NIter = 8e3, Nthin = 1, # for a full run
+                       consts = consts, block = MakeBlockList(consts, LVwise = F), slice = c(paste0("beta0[",1:consts$NSpecies,"]")))
 ```
 
 ```{r mcmc2_process}
 VarsToProcess <- c("^B", "^O", "^epsilon", "^varepsilon", "^z", "^gamma")
 
-# Re-scale gamma
-chains2LV.sc <- RescaleChains(HO.LV, ScaleBy = "gamma", 
-                              SDTorescale = c("sd.Species"),
-                              ToRescale = c("gamma",  "O", "varepsilon"))
+#no need to rescale here, the quantities we track are already rescaled.
+# # Re-scale gamma
+# chains2LV.sc <- RescaleChains(HO.LV, ScaleBy = "gamma", 
+#                               SDTorescale = c("sd.Species"),
+#                               ToRescale = c("gamma",  "O.ort", "varepsilon"))
+# 
+# # Re-scale Z
+# chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy = "z", 
+#                               SDTorescale = c("sd.Site"), 
+#                               ToRescale = c("z",  "B.ort", "epsilon"))
 
-# Re-scale Z
-chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy = "z", 
-                              SDTorescale = c("sd.Site"), 
-                              ToRescale = c("z",  "B", "epsilon"))
-
-# Now rotate based on Z*Sigma and return its scale as LVsd.
-# Note that rotation can lead to non-diagonal sd.Site and sd.Species
-# But off-diagonals are not currently returned
-# chains2LV.r <- RotateChains(chains2LV.sc2, rotation.fn = "svd", scale = T)
+# # Process B and O for orthogonality
+# chains2LV.ort <- processPredEffs(chains2LV.sc2)
 
 # post-process chains for sign-swapping
-chains2LV <- postProcess(chains2LV.sc2, VarsToProcess = VarsToProcess, rule = 2, print = T)#, VarsToSwapBy = c("1]" = "B[2, 1]", "2]" = "varepsilon[2, 2]","3]" = "z[5, 3]", "4]" = "B[1, 4]", "5]" = "O[8, 5]"))
+chains2LV <- postProcess(HO.LV, VarsToProcess = VarsToProcess, rule = 2, print = T)
 
 # Calculate summaries
 summ.HOLV <- summary(chains2LV)
-
-rm(chains2LV.sc, chains2LV.sc2)
 ```
 
 
@@ -747,7 +721,11 @@ B.m <- GetMeans(summ.HOLV, name="B", d=consts$nLVs)%*%diag(sqrt(SDs[,1]))
 row.names(B.m) <- colnames(dat$X)
 O.m <- GetMeans(summ.HOLV, name="O", d=consts$nLVs)%*%diag(sqrt(SDs[,1]))
 row.names(O.m) <- colnames(dat$TR)
-
+# orthogonalize B.m and O.m
+B.m.nn <- sweep(B.m,2,apply(B.m,2,function(x)sqrt(sum(x^2))),"/")
+B.m <- B.m.nn %*% solve(chol(t(B.m.nn)%*%B.m.nn))
+O.m.nn <- sweep(O.m,2,apply(O.m,2,function(x)sqrt(sum(x^2))),"/")
+O.m <- O.m.nn %*% solve(chol(t(O.m.nn)%*%O.m.nn))
 
 par(mfrow=c(2,1))
 #LVs

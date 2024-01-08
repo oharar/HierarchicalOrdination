@@ -2,6 +2,8 @@
 title: "Hierarchical ordination"
 output: html_document
 date: "`r Sys.Date()`"
+editor_options: 
+  chunk_output_type: console
 ---
 
 ```{r setup, include=FALSE}
@@ -153,6 +155,321 @@ OneLV.nim <- nimbleCode({
       OSTAR[tr] ~ dnorm(0, sd = 1)
     }
 })
+sampler_glm_pois <- nimbleFunction(
+  
+  contains = sampler_BASE,
+  name = 'sampler_glm_pois',
+  setup = function(model, mvSaved, target, control) {
+    # some defensive programming
+    # assigning the sampler to only some components of a multivariate node will
+    # result in the wrong posterior
+    targetCollected <- model$expandNodeNames(target) # not sure if multivariate nodes can ever come as series of univariates
+    n.target.collected <- length(targetCollected)
+    targetAsScalar <- model$expandNodeNames(target, returnScalarComponents = TRUE)
+    n.param.nodes <- length(targetAsScalar) # number of target parameters
+    if(n.target.collected != n.param.nodes){
+      stop("This sampler should be applied to all components of a multivariate node simultaneously.")
+    }
+    priorDist <- unlist(sapply(targetCollected,model$getDistribution))
+    # find hyper parameter index
+    priorParID <- integer(n.target.collected)
+    for(i in 1:n.target.collected){
+      priorParID[i] <- which(names(getDistributionInfo(model$getDistribution(targetCollected[i]))$paramIDs)%in%c("var","cov"))
+    }
+    # this sampler only works for normally distributed nodes
+    if(!all(priorDist%in%c("dnorm","dmnorm"))){
+      stop("This sampler requires target parameters to have normally distributed priors.")
+    }
+    calcNodes <- model$getDependencies(target)
+    # check if initial values were assigned, if not simulate from prior
+    if(is.na(model$calculate())){
+    model$simulate()     
+    model$calculate(calcNodes)
+    }
+    # get some information about the model
+    response.nodes.names <- names(which(model$isStoch(names(model$origData)))) # names of response nodes
+    if(!all(model$getDistribution(response.nodes.names)=="dpois"))stop("This sampler is designed only for Poisson responses.")
+    response.name  = unique(gsub("\\[.*","",response.nodes.names))
+    response.nodes <- values(model, response.nodes.names) # response data
+    n.response.nodes <- length(response.nodes) # number of observations
+    n.zero.response.nodes = sum(response.nodes==0) # number of zero observations
+    ## get distribution parameter names
+    dist.par.names = model$getParents(response.nodes.names,determOnly = F, immediateOnly = T)
+    distpar.name  = unique(gsub("\\[.*","",dist.par.names))
+    lp.nodes.names = model$getParents(dist.par.names,immediateOnly = T, determOnly = T,includeData = F)
+    lp.name  = unique(gsub("\\[.*","",lp.nodes.names))
+    # get corresponding "data" nodes to target
+    # we don't have information on the data, so we do this by iterating through the linear predictor
+    # parameter by parameter
+    X <- matrix(0, nrow = n.response.nodes, ncol = n.param.nodes)
+    inits <- values(model, targetAsScalar) # temporarily store parameters
+    # get any constant parts in the lp
+    lp.temp.setup <- values(model, lp.name)
+    values(model, targetAsScalar) <<- 2*inits
+    model$calculate(lp.name)
+    lpCon <- 2*lp.temp.setup-values(model, lp.name)
+    values(model, targetAsScalar) <<- inits
+    # calculate "X" from the linear predictor
+    for(i in 1:n.param.nodes){
+    par <- inits[i]
+    values(model, targetAsScalar[i]) <<- 0
+    model$calculate(lp.name)
+    temp.lp1 <- values(model, lp.name)
+    values(model, targetAsScalar[i]) <<- inits[i]
+    X[,i] <- (lp.temp.setup-temp.lp1)/par
+    }
+    rm(temp.lp1,lp.temp.setup)
+    # Set-up the prior parameters
+    priorMean = matrix(0,ncol=1,nrow=n.param.nodes)
+    priorCov = matrix(0, ncol = n.param.nodes, nrow = n.param.nodes)
+    # need to turn this into a function that accepts a bunch of indices so i can update hyperpars mid-run
+    # if all node entries are in the target, sample as is. otherwise, we need the conditional means and covariance.
+    # so, check if "target" has subset entries of a multivariate node
+    # means
+      k.setup <- 1
+      for(i in 1:n.target.collected){
+      means.setup = model$getParam(targetCollected[i], 'mean')
+      priorMean[k.setup:(k.setup+length(means.setup)-1),1] <- means.setup
+      k.setup <- k.setup+length(means.setup)
+      }
+      rm(means.setup, k.setup)
+    # covariances
+      k.setup <- 1
+      for(i in 1:n.target.collected){
+      covs.setup = as.matrix(model$getParam(targetCollected[i], priorParID[i]))
+      dims.setup = dim(covs.setup)[1]
+      priorCov[k.setup:(k.setup+dims.setup-1),k.setup:(k.setup+dims.setup-1)] <- covs.setup
+      k.setup <- k.setup+dims.setup
+      }
+      rm(covs.setup, k.setup, dims.setup)
+    # check if there are hyperparameters in the model that might need updating mid-run
+    hasHyperPar <- length(model$getParents(target))>0
+    # check if there are other parameters in the model than that we are sampling
+    # but filter it by potential parent nodes, i.e., hyper parameters
+    hasOtherLPpar <- (length(model$expandNodeNames(model$getNodeNames(stochOnly = T,includeData = F)))-length(model$getParents(model$expandNodeNames(model$getNodeNames(stochOnly = T,includeData = F)))))>length(targetAsScalar)
+    # mixture components
+    # v: variances (s), m: means (m), w: weights
+    mcomp <- pogit:::mixcomp_poisson()
+    mcompm <- mcomp$m
+    mcompv <- mcomp$v
+    mcompw <- mcomp$w
+    # start by getting mixture components, this is "get_mixcomp" in pogit
+    # m: means for mixture components, v: scales, w: weights
+    if(sum(response.nodes<3e4)==n.response.nodes){
+      my = mcomp$m[response.nodes[response.nodes>0],]
+      vy = mcomp$v[response.nodes[response.nodes>0],]
+      wy = mcomp$w[response.nodes[response.nodes>0],]
+    }else{
+      wy = vy = my = matrix(0, nrow = n.response.nodes - n.zero.response.nodes, ncol = 10)
+      my[response.nodes[response.nodes>0] <= 3e4,1:dim(mcomp$m)[2]] = mcomp$m[response.nodes[(response.nodes>0) & (response.nodes <= 3e4)],]
+      vy[response.nodes[response.nodes>0] <= 3e4,1:dim(mcomp$v)[2]] = mcomp$v[response.nodes[(response.nodes>0) & (response.nodes <= 3e4)],]
+      wy[response.nodes[response.nodes>0] <= 3e4,1:dim(mcomp$w)[2]] = mcomp$w[response.nodes[(response.nodes>0) & (response.nodes <= 3e4)],]
+      # this comes from "compute_mixture.R"
+      for(i in response.nodes[response.nodes>3e4]){
+        my[response.nodes[response.nodes>0]==i,1] <- -digamma(i)
+        vy[response.nodes[response.nodes>0]==i,1] <- trigamma(i)
+        wy[response.nodes[response.nodes>0]==i,1] <- 1 
+      }
+    }
+    vy[is.na(vy)] <- 0
+    my[is.na(my)] <- 0
+    wy[is.na(wy)] <- 0
+    # for use in step 3
+    # R1
+    c1 <- t(matrix(log(mcompw[1, ]) - 0.5*log(mcompv[1, ]), nrow = 10, ncol = n.response.nodes)) # not sure what this is yet
+    # R2
+    vy2 <- vy
+    vy2[vy2==0]<-1
+    lwy <- log(wy)
+    lwy[is.infinite(lwy)] <- 0
+    lvy <- log(vy)
+    lvy[is.infinite(lvy)] <- 0
+    c2 <- (lwy - 0.5*lvy) 
+    kill <- matrix(vy > 0, n.response.nodes - n.zero.response.nodes, 10)
+  },
+  run = function() {
+    
+    if(hasOtherLPpar){
+    # -1. Update "lpCon", i.e., "fixed" portion of LP
+    pars <- values(model, target) # temporarily store parameters
+    lp.temp <- values(model, lp.name)
+    values(model, targetAsScalar) <<- 2*pars
+    model$calculate(lp.name)
+    lpCon <<- 2*lp.temp-values(model, lp.name)
+    values(model, targetAsScalar) <<- pars # restore parameters
+    model$calculate(lp.name)
+    }
+    
+    if(hasHyperPar){
+    # 0. retrieve new hyperparameters
+      k <- 1L
+      for(i in 1:n.target.collected){
+      dims <- length(values(model, targetCollected[i]))
+      idx <- k+dims-1L
+      priorMean[k:idx,1] <<- nimMatrix(model$getParam(targetCollected[i], 'mean'),ncol = 1)
+      temp = model$getParam(targetCollected[i], priorParID[i])
+      priorCov[k:idx,k:idx] <<- nimMatrix(temp, ncol = dims, nrow = dims) # covariances
+      k <- k+dims
+      }
+    }
+
+    ## get LP and lambda
+    lp = values(model, lp.nodes.names)
+    lambda = exp(lp)# sampler is only valid for models with the log-link # values(model, dist.par.names)
+    #1. update tau's, step 1 in Fruhwirth-Schnatter et al. 2009
+    # this part is covered in dataug_pois_iams.R->iams1_poisson
+    # tau are latent variables that represent the inter-arrival times of a Poisson process
+    # get_mixcomp_poisson in dataug_pois_iams.R just gets components that we need for the other functions
+    
+    tau <- update_tau(response.nodes, n.response.nodes, n.zero.response.nodes, lambda)
+    t1 <- tau[,1]
+    t2 <- tau[response.nodes>0,2]
+    # 2. update R's, step 2 in Fruhwirth-Schnatter et al. 2009
+    # this part is covered in dataug_pois_iams.R->iams2_poisson
+    # Rmix are normal mixture approximations to Poissons
+    
+    R1 <- update_R1(n.response.nodes, lp, t1, mcompm, mcompv, c1)
+    R2 <- update_R2(response.nodes, n.response.nodes, n.zero.response.nodes, lp, t2, vy, my, vy2, c2, kill)
+    
+    # 3. simulate parameters given R, tau
+    # this part is covered in "select_poisson.R"
+    # calculate posterior moments
+    proposal <- simulate_post(X, n.response.nodes, n.zero.response.nodes, n.param.nodes, response.nodes, R1, R2, tau, mcompv, mcompm, my, vy, priorMean, priorCov, lpCon)
+    # store it
+    values(model, targetAsScalar) <<-  proposal
+    # update nodes based on proposal
+    model$calculate()
+    # keep the model and mvSaved objects consistent
+    copy(from = model, to = mvSaved, row = 1, 
+         nodes = target, logProb = TRUE)
+  },
+  methods = list(simulate_post = function(X = double(2), n.response.nodes = integer(), n.zero.response.nodes = integer(), n.param.nodes = integer(), response.nodes = integer(1), R1 = integer(1), R2 = integer(1), tau = double(2), mcompv = double(2), mcompm = double(2), my = double(2), vy = double(2), priorMean = double(2), priorCov = double(2), lpCon = double(1)){
+    m1 <- mcompm[1,R1]
+    m2 <- numeric(n.response.nodes-n.zero.response.nodes)
+    for(i in 1:10){
+      m2[R2==i] <- my[R2==i, i]
+    }
+    # second: mixture component variances
+    v1 <- mcompv[1,R1]
+    v2 <- numeric(n.response.nodes-n.zero.response.nodes)
+    for(i in 1:10){
+      v2[R2==i] <- vy[R2==i, i]
+    }
+    invSigS = numeric(n.response.nodes)
+    ys1 = (-log(tau[,1])-m1)/sqrt(v1) # this is also "AuxMixPoisson:value()" in JAGS
+    ys2 = (-log(tau[response.nodes>0,2])-m2)/sqrt(v2)
+    invSigS = 1/v1
+    invSigS[response.nodes>0] = invSigS[response.nodes>0]+1/v2
+    # prior parameters
+    priorPrec <- inverse(priorCov)
+    # posterior parameters
+    postPrec <- priorPrec + t(X)%*%diag(invSigS)%*%X
+    postMean <- solve(postPrec, priorPrec%*%priorMean+ (t(X)%*%diag(1/sqrt(v1))%*%ys1+t(X[response.nodes>0,])%*%diag(1/sqrt(v2))%*%ys2)) # see eq (8) Fruhwirth-Schnatter and Wagner 2006 or L109-111 from pogit::select_poisson.Rs
+    # a sample from the posterior
+    proposal <- rmnorm_chol(1, mean = c(postMean), cholesky = chol(postPrec), prec_param = TRUE)
+    return(proposal)
+    returnType(double(1))
+},
+                 update_tau = function(response.nodes = integer(1), n.response.nodes = integer(), n.zero.response.nodes = integer(), lambda = double(1)){
+                        taunew = matrix(0, nrow = n.response.nodes, ncol = 2)
+                        taunew[,1] <- rexp(n.response.nodes, lambda)
+                        tau2 <- rbeta(n.response.nodes - n.zero.response.nodes, response.nodes[response.nodes>0], 1)
+                        taunew[response.nodes > 0,  1] = 1-tau2 + taunew[response.nodes > 0,1]
+                        taunew[response.nodes > 0,  2]  = tau2
+                        taunew[response.nodes == 0, 1] = 1 +  taunew[response.nodes == 0, 1]
+                        return(taunew)
+                        returnType(double(2))
+                      },
+                update_R1 = function(n.response.nodes = integer(), lp = double(1), t1 = double(1), mcompm = double(2), mcompv = double(2), c1 = double(2))
+                      {
+                        rgm <- matrix(0, ncol = 10, nrow = n.response.nodes)
+                        for(i in 1:10){
+                          rgm[,i] <- c1[,i] - 0.5*(-log(t1)-lp - mcompm[1,i])^2/mcompv[1,i]
+                          rgm[rgm[,i]==0,i] <- -Inf
+                        }
+                        mx <- numeric(n.response.nodes)
+                        e1 <- matrix(0, ncol = 10, nrow = n.response.nodes)
+                        for(i in 1:n.response.nodes){
+                          mx[i] <- max(rgm[i,])
+                          if(mx[i]==-Inf)mx[i]=0
+                          e1[i,] <- exp(rgm[i,]-mx[i])
+                        }
+                        # row sum
+                        rgmod <- e1%*%matrix(1,nrow=10,ncol=1)
+                        
+                        e1.new = matrix(0, ncol = 10, nrow = n.response.nodes)
+                        for(i in 1:10){
+                          e1.new[,i] <- e1[,i]/rgmod # for safety might want to check for 0/0 i.e., nan
+                        }
+                        tri.mat = matrix(1, 10, 10)
+                        for (j in 1:9) {
+                          for (i in (j+1):10) {
+                            tri.mat[i,j] = 0
+                          }
+                        }
+                        Fn    <- e1.new%*%tri.mat
+                        
+                        # determination of random indicators R1
+                        # inverse transform sampling Poisson-Binomial
+                        u <- runif(n.response.nodes, 0, 1)
+                        R1.temp <- nimMatrix(0, ncol = 10, nrow = n.response.nodes, type = "integer")
+                        for(i in 1:10){
+                          R1.temp[,i] <- u<Fn[,i]
+                        }
+                        # declare R1new explicitly as integer
+                        R1new <- integer(n.response.nodes)
+                        R1new[1:n.response.nodes] <- 11L-c(R1.temp%*%nimMatrix(1,nrow=10,ncol=1, type = "integer"))
+                        
+                        return(R1new)
+                        returnType(integer(1))
+                      },
+                update_R2 = function(response.nodes = integer(1), n.response.nodes = integer(), n.zero.response.nodes = integer(), lp = double(1), t2 = double(1), vy = double(2), my = double(2), vy2 = double(2), c2 = double(2), kill = logical(2)){
+                        rgmx <- matrix(0, ncol = 10, nrow = n.response.nodes - n.zero.response.nodes)
+                        for(i in 1:10){ #ncol r gm
+                          rgmx[,i]   <- c2[,i] - 0.5*((-log(t2)-lp[response.nodes>0]- my[,i])*kill[,i])^2/vy2[,i]
+                          rgmx[rgmx[,i]==0,i] <- -Inf
+                        }
+                        e2 <- matrix(0,nrow = n.response.nodes-n.zero.response.nodes, ncol = 10)
+                        mx2 = numeric(n.response.nodes-n.zero.response.nodes)
+                        for(i in 1:(n.response.nodes-n.zero.response.nodes)){
+                          mx2[i] = max(rgmx[i,])
+                          if(mx2[i]==-Inf)mx2[i]=0
+                          e2[i,] <- exp(rgmx[i,]-mx2[i])
+                        }
+                        # row sum
+                        rgmodx <- e2%*%matrix(1,nrow=10,ncol=1)
+
+                        e2.new = matrix(0,nrow=n.response.nodes-n.zero.response.nodes, ncol = 10)
+                        for(i in 1:10){
+                          e2.new[,i] <- e2[,i]/rgmodx # for safety might want to check for 0/0 i.e., nan
+                        }
+                        
+                        tri.mat = matrix(1, 10, 10)
+                        for (j in 1:9) {
+                          for (i in (j+1):10) {
+                            tri.mat[i,j] = 0
+                          }
+                        }
+                        
+                        Fx     <- e2.new%*%tri.mat
+                        
+                        # determination of random indicators R2
+                        # inverse transform sampling Poisson-Binomial
+                        ux <- runif(n.response.nodes - n.zero.response.nodes, 0, 1)
+                        R2.temp <- nimMatrix(0, ncol = 10, nrow = n.response.nodes - n.zero.response.nodes, type = "integer")
+                        for(i in 1:10){
+                          R2.temp[,i] <- ux<Fx[,i]
+                        }
+                        # declare R2new explicitly as integer
+                        R2new <- integer(n.response.nodes - n.zero.response.nodes)
+                        R2new[1:(n.response.nodes-n.zero.response.nodes)] <- 11L-R2.temp%*%nimMatrix(1,nrow=10,ncol=1, type = "integer")
+                        
+                        return(R2new)
+                        returnType(integer(1))
+                      },
+                 reset = function () {}
+                    )
+)
 ```
 </details>
 
@@ -211,20 +528,20 @@ RunOneChain <- function(seed, dat, code, inits, consts, ToMonitor=NULL,
     if(!is.null(block)) { 
     if(is.list(block)){
     # Use a slice everything that not being HMCed
-      lapply(block, conf$addSampler, type = "AF_slice")
+      lapply(block, conf$addSampler, type = "sampler_glm_pois")
     }else{
       # Use a slice everything that not being HMCed
-      sapply(block, conf$addSampler, type = "AF_slice")
+      sapply(block, conf$addSampler, type = "sampler_glm_pois")
     }
     }
     
     if(!is.null(slice)) { 
     if(is.list(slice)){
     # Use a slice everything that not being HMCed
-      lapply(slice, conf$addSampler, type = "slice")
+      lapply(slice, conf$addSampler, type = "sampler_glm_pois")
     }else{
       # Use a slice everything that not being HMCed
-      sapply(slice, conf$addSampler, type = "slice")
+      sapply(slice, conf$addSampler, type = "sampler_glm_pois")
     }
     }
     
@@ -246,7 +563,7 @@ ParaNimble <- function(NChains, ...) {
   }
   require(parallel)
   nimble_cluster <- makeCluster(NChains)
-  
+  clusterExport(cl = nimble_cluster, "sampler_glm_pois")
   samples <- parLapply(cl = nimble_cluster, X = seeds, ...)
   stopCluster(nimble_cluster)
 
@@ -791,18 +1108,19 @@ HO.2LV <- ParaNimble(4, fun = RunOneChain,
 ```
 
 ```{r mcmc2_process}
-# Re-scale gamma
-chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
-                              SDTorescale = c("sd.Species"),
-                              ToRescale = c("gamma",  "O", "varepsilon"))
-
-# Re-scale Z
-chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy = "z", 
-                              SDTorescale = c("sd.Site"), 
-                              ToRescale = c("z",  "B", "epsilon"))
+#don't need to rescale, have already been rescaled mid-run
+# # Re-scale gamma
+# chains2LV.sc <- RescaleChains(HO.2LV, ScaleBy = "gamma", 
+#                               SDTorescale = c("sd.Species"),
+#                               ToRescale = c("gamma",  "O", "varepsilon"))
+# 
+# # Re-scale Z
+# chains2LV.sc2 <- RescaleChains(chains2LV.sc, ScaleBy = "z", 
+#                               SDTorescale = c("sd.Site"), 
+#                               ToRescale = c("z",  "B", "epsilon"))
 
 # Now rotate based on Z*Sigma and return its scale as LVsd.
-chains2LV.r <- RotateChains(chains2LV.sc2, rotation.fn = "svd", scale = T)
+chains2LV.r <- RotateChains(HO.2LV, rotation.fn = "svd", scale = T)
 
 # post-process chains for sign-swapping
 chains2LV <- postProcess(chains2LV.r, VarsToProcess = VarsToProcess, rule = 2, print=T)
