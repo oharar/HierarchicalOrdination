@@ -723,7 +723,7 @@ lattice::levelplot(coefs, xlab = "Environmental Variables",
 
 Now, we can make two-dimensional ordination plots of sites and species, with their predictor effects. We scale both the site scores and species loadings by the square root of the LV variation.
 
-```{r results2_site, warning=FALSE, fig.height=12,cache=F}
+```{r results2_site, warning=FALSE, fig.height = 6, fig.width = 6, cache=F, fig.show="hold"}
 # get LV variation for plotting
 SDs <- summ.HOLV$statistics[grep("sd.LV", rownames(summ.HOLV$statistic)),]
 rownames(SDs) <- c(paste0("Latent Variable ", 1:10))
@@ -761,7 +761,6 @@ apply(epsilon.STAR%*%solve(diag(z.sd))%*%diag(sqrt(SDs[,1])),2,var)/sum(SDs[,1]^
 apply(epsilon.STAR%*%solve(diag(z.sd)),2,var)/sum(apply(epsilon.STAR%*%solve(diag(z.sd)),2,var))
 apply(varepsilon.STAR%*%solve(diag(gamma.sd)),2,var)/sum(apply(varepsilon.STAR%*%solve(diag(gamma.sd)),2,var)) 
 
-par(mfrow=c(2,1))
 #LVs
 plot(z.m[,1:2],type="n", xlab="Latent variable 1", ylab="Latent variable 2", main = "Sites")
 text(z.m[,1:2],labels=1:consts$NSites)
