@@ -1,8 +1,9 @@
 ---
 title: "Hierarchical Ordination, A unifying framework for drivers of community processes"
+subtitle: "Running Title: Hierarchical Ordination"
 author: 
-  - R.B. O'Hara$^{12}$
-  - B. van der Veen$^{123}$
+  - R.B. O'Hara$^{12} bob.ohara@ntnu.no Tel: +47 91554416$
+  - B. van der Veen$^{123} bert.v.d.veen@ntnu.no$
 date: $^1$Department of Mathematical Sciences, Norwegian University of Science and Technology, Trondheim, Norway \newline $^2$Centre of Biodiversity Dynamics, Norwegian University of Science and Technology, Trondheim, Norway \newline $^3$Department of Landscape and Biodiversity, Norwegian Institute of Bioeconomy research, Trondheim, Norway \newline
 output: pdf_document
 header-includes:
@@ -19,6 +20,9 @@ header-includes:
    - \usepackage{float}
 bibliography: references.bib
 biblio-style: methods-in-ecology-and-evolution.csl
+
+nocite: |
+  @Ribera2001
 ---
 
 ```{css, echo=FALSE}
@@ -29,15 +33,45 @@ table, th, td {
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+
+GetWC <- function(RMD) {
+  Strng <- paste(readLines(con=RMD), collapse = "\n") # Makr one line
+  WC <- gsub(".*---", "", Strng)
+  lengths(strsplit(WC, ' '))
+}
+# AbstractWC <- readLines(con="Abstract.Rmd")
+# # lengths(strsplit(AbstractWC[8], ' '))
+# 
+# TextBoxWC <- paste(readLines(con="TextBox.Rmd"), collapse = "\n") # Makr one line
+# TextBoxWC <- gsub(".*---", "", TextBoxWC)
+# # lengths(strsplit(TextBoxWC, ' '))
+
 ```
 
-Word count: `r as.integer(sub("(\\d+).+$", "\\1", system(sprintf("wc -w %s", knitr::current_input()), intern = TRUE))) - 20`
+**Article Type:** Methods
+
+**Word Count:** Abstract: `r GetWC("Abstract.Rmd")`. Main text: `r as.integer(sub("(\\d+).+$", "\\1", system(sprintf("wc -w %s", knitr::current_input()), intern = TRUE))) - 20`. Text Box: `r GetWC("TextBox.Rmd")`
+
+**Number of references:** 37
+
+**Number of figures, tables, and text boxes: ** 1 figure, 0 tables, 1 text box
+
+
+**Statement of authorship:** Usually a manuscript with a student and their supervisor comes about when the supervisor has a brilliant idea, but doesn't have time, so the student has to do all of the hard work, trying to find out if the idea actually works and doing the writing. In this manuscript, the roles were reversed. Neither author is totally sure how it happened.
+
+**Data accessibility statement:** The data are available on figshare (DOI: 10.6084/m9.figshare.c.3297428.v1), as well as in the GitHub repository for this manuscript (https://github.com/oharar/HierarchicalOrdination).
+
+
+\newpage
 
 ## Abstract
 
-Ordination methods have been used by community ecologists to describe and explore the communities they sample by reducing this variation down to a small number of dimensions. More recently, Joint Species Distribution Models have been developed to model and predict the distributions of several species simultaneously. Contemporary models for the data for both of these problems are essentially the same, called Generalised Linear Latent Variable Models (GLLVMs). Based on this we suggest some avenues of cross-fertilisation between the two areas of research. We also describe some of the extensions to GLLVMs, and from this suggest the development of Hierarchical Ordination, as a way of efficiently modelling communities of species in space.
+```{r test, child="Abstract.Rmd", eval=TRUE}
+```
 
 Keywords: Ordination, JSDM, GLLVM
+
+\newpage
 
 ## Introduction
 
@@ -205,11 +239,10 @@ Potentially, more than one ordination could also be used [@Bjork2018], so the fr
 \begin{tikzpicture}
 \node [mybox] (box){%
 \begin{minipage}{\textwidth}
-We demonstrate hierarchical ordination with data originally collected by Ribera et al. (2001). It consists of abundance observations of 68 ground beetle species on 87 sites in Scotland, along with 17 environmental variables and 20 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. With so many traits and environmental variables, hierarchical ordination is an attractive approach to controlling the variation.
 
-The model is described in the Supporting Information. Briefly, we model the counts as following a negative-binomial distribution with a log link, two latent variables and linear models for the site scores (with the 17 environmental variables) and species effects (20 traits).
+```{r test, child="TextBox.Rmd", eval=TRUE}
+```
 
-Biplots of the species and site effects are in Fig. 1. The traits and the environment explain 47 and 75 percent of the variation explained by the model. From the 10 estimated latent variables, the first two explain 60 percent of the variation, of which the environmental variables explain 1 percent and 11 percent of the variation in the site scores of the first and second latent variables respectively, and the traits explain 12 percent and 13 percent of the variation in the species effects, indicating that the dominant ecological gradients cannot be represented well by the covariates. Most notably, the latent variables with the largest variance explained by the predictors are the third and fifth for environment and traits, respectively. We can see that the first axis is largely a management gradient, and (in essence) the maximum width and having black legs (CLG2) are the main traits that explain abundance variation. We note that both of these may be phylogenetically conserved.
 \begin{figure}[H]
 \centering
 \begin{subfigure}{.5\textwidth}
@@ -246,9 +279,5 @@ Though the modeling framework suggested here is statistical in nature, this appr
 
 The modelling of multispecies communities is being changed by the application of more sophisticated statistical techniques. Here we are suggesting that they can unify different fields, as they are modelling similar processes, and so can open up the fields to new questions. This is done both by moving ideas from one field to another (e.g. using ordination plots in JSDMs), and also by opening up new ways of analysing the data, with flexible models that can handle the problems associated with having many sites and species. To quote one of the world's great philosophers, [let's go exploring](https://www.gocomics.com/calvinandhobbes/1995/12/31) [@CalvinHobbes].
 
-
-# Author Contributions
-
-Usually a manuscript with a student and their supervisor comes about when the supervisor has a brilliant idea, but doesn't have time, so the student has to do all of the hard work, trying to find out if the idea actually works and doing the writing. In this manuscript, the roles were reversed. Neither author is totally sure how it happened.
 
 # References

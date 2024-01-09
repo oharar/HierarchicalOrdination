@@ -1,0 +1,14 @@
+---
+title: "Text Box"
+author: "Bob O'Hara"
+date: "`r Sys.Date()`"
+output: html_document
+bibliography: references.bib
+
+---
+
+We demonstrate hierarchical ordination with data originally collected by Ribera et al. (2001). It consists of abundance observations of 68 ground beetle species on 87 sites in Scotland, along with 17 environmental variables and 20 traits. The aim to is determine how the environmental variables and traits affect composition in the ecological community, including whether they interact. With so many traits and environmental variables, hierarchical ordination is an attractive approach to controlling the variation.
+
+The model is described in the Supporting Information. Briefly, we model the counts as following a negative-binomial distribution with a log link, two latent variables and linear models for the site scores (with the 17 environmental variables) and species effects (20 traits).
+
+Biplots of the species and site effects are in Fig. 1. The traits and the environment explain 47 and 75 percent of the variation explained by the model. From the 10 estimated latent variables, the first two explain 60 percent of the variation, of which the environmental variables explain 1 percent and 11 percent of the variation in the site scores of the first and second latent variables respectively, and the traits explain 12 percent and 13 percent of the variation in the species effects, indicating that the dominant ecological gradients cannot be represented well by the covariates. Most notably, the latent variables with the largest variance explained by the predictors are the third and fifth for environment and traits, respectively. We can see that the first axis is largely a management gradient, and (in essence) the maximum width and having black legs (CLG2) are the main traits that explain abundance variation. We note that both of these may be phylogenetically conserved.
