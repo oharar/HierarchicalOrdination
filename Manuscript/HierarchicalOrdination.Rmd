@@ -2,9 +2,9 @@
 title: "Hierarchical Ordination, A unifying framework for drivers of community processes"
 subtitle: "Running Title: Hierarchical Ordination"
 author: 
-  - R.B. O'Hara$^{12} bob.ohara@ntnu.no Tel: +47 91554416$
+  - R.B. O'Hara$^{124} bob.ohara@ntnu.no$
   - B. van der Veen$^{123} bert.v.d.veen@ntnu.no$
-date: $^1$Department of Mathematical Sciences, Norwegian University of Science and Technology, Trondheim, Norway \newline $^2$Centre of Biodiversity Dynamics, Norwegian University of Science and Technology, Trondheim, Norway \newline $^3$Department of Landscape and Biodiversity, Norwegian Institute of Bioeconomy research, Trondheim, Norway \newline
+date: $^1$Department of Mathematical Sciences, Norwegian University of Science and Technology, Trondheim, Norway \newline $^2$Centre of Biodiversity Dynamics, Norwegian University of Science and Technology, Trondheim, Norway \newline $^3$Department of Landscape and Biodiversity, Norwegian Institute of Bioeconomy research, Trondheim, Norway \newline $^4$ Corresponding author. Telephone +47 91554416 \newline
 output: pdf_document
 header-includes:
    -  \usepackage[left]{lineno}
